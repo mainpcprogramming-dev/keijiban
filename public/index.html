@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quiet Board - 落ち着いた掲示板</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <h1 class="logo" onclick="goLobby()">Quiet Board</h1>
+      <div id="header-user-area" class="user-area hidden">
+        <span id="current-username" class="username-badge"></span>
+        <button onclick="logout()" class="btn btn-outline btn-sm">ログアウト</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- 1. ホーム画面（ログイン / アカウント登録） -->
+    <section id="auth-view" class="view">
+      <div class="card auth-card">
+        <div class="auth-tabs">
+          <button id="tab-login" class="tab-btn active" onclick="switchAuthTab('login')">ログイン</button>
+          <button id="tab-register" class="tab-btn" onclick="switchAuthTab('register')">新規アカウント登録</button>
+        </div>
+
+        <form id="auth-form" onsubmit="handleAuth(event)">
+          <div class="form-group">
+            <label for="auth-username">ユーザー名</label>
+            <input type="text" id="auth-username" required placeholder="ユーザー名を入力">
+          </div>
+          <div class="form-group">
+            <label for="auth-password">パスワード</label>
+            <input type="password" id="auth-password" required placeholder="パスワードを入力">
+          </div>
+          <p id="auth-error" class="error-text"></p>
+          <button type="submit" id="auth-submit-btn" class="btn btn-primary btn-block">ログイン</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- 2. ロビー画面（スレッド作成 & 一覧） -->
+    <section id="lobby-view" class="view hidden">
+      <div class="lobby-grid">
+        <!-- スレッド作成フォーム -->
+        <aside class="card create-thread-card">
+          <h2>新しいスレッドを立てる</h2>
+          <form id="create-thread-form" onsubmit="createThread(event)">
+            <div class="form-group">
+              <label for="thread-title">スレッドタイトル</label>
+              <input type="text" id="thread-title" required maxlength="100" placeholder="例：読書感想を語り合う部屋">
+            </div>
+            <div class="form-group">
+              <label for="thread-author">スレ主名（表示名）</label>
+              <input type="text" id="thread-author" required maxlength="50" placeholder="名前を入力">
+            </div>
+            <div class="form-group checkbox-group">
+              <input type="checkbox" id="thread-private">
+              <label for="thread-private">プライベートスレッドにする（部屋番号を発行）</label>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">スレッドを作成する</button>
+          </form>
+        </aside>
+
+        <!-- スレッド一覧 -->
+        <div class="thread-list-section">
+          <div class="section-header">
+            <h2>スレッド一覧</h2>
+            <button onclick="loadLobby()" class="btn btn-outline btn-sm">更新</button>
+          </div>
+          <div id="thread-list" class="thread-list">
+            <!-- JSで動的に描画 -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. スレッド詳細画面 -->
+    <section id="thread-view" class="view hidden">
+      <div class="thread-nav">
+        <button onclick="goLobby()" class="btn btn-outline btn-sm">← ロビーに戻る</button>
+        <div id="creator-controls" class="creator-controls hidden">
+          <button id="toggle-readonly-btn" onclick="toggleReadonly()" class="btn btn-secondary btn-sm">閲覧モードにする</button>
+          <button onclick="deleteThread()" class="btn btn-danger btn-sm">スレッド削除</button>
+        </div>
+      </div>
+
+      <div class="card thread-header-card">
+        <div class="thread-meta-top">
+          <span id="detail-private-badge" class="badge badge-private hidden">🔒 プライベート</span>
+          <span id="detail-room-code" class="badge badge-code hidden"></span>
+          <span id="detail-readonly-badge" class="badge badge-readonly hidden">閲覧専用モード</span>
+        </div>
+        <h2 id="detail-title" class="detail-title"></h2>
+        <p class="detail-sub">スレ主: <span id="detail-author"></span></p>
+      </div>
+
+      <!-- コメント一覧 -->
+      <div id="comments-list" class="comments-list">
+        <!-- JSで動的に描画 -->
+      </div>
+
+      <!-- コメント投稿フォーム -->
+      <div id="comment-form-container" class="card comment-form-card">
+        <form id="comment-form" onsubmit="postComment(event)">
+          <div class="form-group">
+            <textarea id="comment-content" rows="3" placeholder="穏やかな言葉を書き込みましょう..."></textarea>
+          </div>
+          <div class="comment-form-footer">
+            <label class="file-upload-label">
+              <span>📷 画像を添付</span>
+              <input type="file" id="comment-image" accept="image/*" onchange="previewImage(event)" hidden>
+            </label>
+            <button type="submit" class="btn btn-primary">送信する</button>
+          </div>
+          <div id="image-preview-area" class="image-preview-area hidden">
+            <img id="image-preview" src="" alt="プレビュー">
+            <button type="button" onclick="clearImage()" class="btn btn-sm btn-danger">削除</button>
+          </div>
+        </form>
+      </div>
+      <div id="readonly-notice" class="readonly-notice hidden">
+        このスレッドは現在「閲覧モード」のため、新しいコメントは投稿できません。
+      </div>
+    </section>
+  </main>
+
+  <!-- プライベート部屋番号入力モーダル -->
+  <div id="room-modal" class="modal hidden">
+    <div class="modal-content card">
+      <h3>プライベートスレッド</h3>
+      <p>このスレッドを閲覧するには4桁の部屋番号が必要です。</p>
+      <div class="form-group">
+        <input type="text" id="modal-room-input" maxlength="4" placeholder="部屋番号 (例: 1234)">
+      </div>
+      <p id="modal-error" class="error-text"></p>
+      <div class="modal-actions">
+        <button onclick="closeModal()" class="btn btn-outline">キャンセル</button>
+        <button onclick="submitRoomCode()" class="btn btn-primary">入室する</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
