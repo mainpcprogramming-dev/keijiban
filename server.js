@@ -38,7 +38,6 @@ app.use(session({
 
 let vapidPublicKey = '';
 
-// データベース初期化＆VAPID鍵の自動生成・読み込み
 async function initDB() {
   const client = await pool.connect();
   try {
@@ -101,7 +100,6 @@ async function initDB() {
       ALTER TABLE comments ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
     `);
 
-    // Web Push用VAPIDキーをDBから取得、なければ自動生成して永続保存
     const pubRes = await client.query("SELECT value FROM app_config WHERE key = 'vapid_public'");
     const privRes = await client.query("SELECT value FROM app_config WHERE key = 'vapid_private'");
 
@@ -139,7 +137,6 @@ function generateRoomCode() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
-// 対象ユーザー群にWeb Push通知を送信するヘルパー
 async function sendPushNotifications(targetUserIds, payloadObj) {
   if (!targetUserIds || targetUserIds.length === 0) return;
   try {
@@ -157,7 +154,6 @@ async function sendPushNotifications(targetUserIds, payloadObj) {
         const sub = JSON.parse(row.subscription_json);
         await webpush.sendNotification(sub, payloadStr);
       } catch (err) {
-        // 期限切れ・無効になった購読情報は自動削除
         if (err.statusCode === 404 || err.statusCode === 410) {
           await pool.query('DELETE FROM push_subscriptions WHERE id = $1', [row.id]);
         }
@@ -246,7 +242,6 @@ app.post('/api/logout', (req, res) => {
   res.json({ success: true });
 });
 
-// パスワード変更（変更後は即ログアウト）
 app.post('/api/account/password', requireAuth, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   if (!currentPassword || !newPassword || newPassword.trim() === '') {
@@ -264,7 +259,6 @@ app.post('/api/account/password', requireAuth, async (req, res) => {
     const newHash = await bcrypt.hash(newPassword, 10);
     await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, req.session.userId]);
 
-    // セッションを破棄して即ログアウト
     req.session.destroy(() => {
       res.json({ success: true });
     });
@@ -273,7 +267,6 @@ app.post('/api/account/password', requireAuth, async (req, res) => {
   }
 });
 
-// アカウント完全削除（スレッド・コメント・いいね・購読情報もON DELETE CASCADEで全削除）
 app.delete('/api/account', requireAuth, async (req, res) => {
   const userId = req.session.userId;
   try {
@@ -363,13 +356,13 @@ app.post('/api/threads', requireAuth, async (req, res) => {
     );
     const newThread = result.rows[0];
 
-    // 公開スレッドが作成された場合、作成者以外の全ユーザーに通知
     if (!isPrivate) {
       const usersRes = await pool.query('SELECT id FROM users WHERE id != $1', [req.session.userId]);
       const targetIds = usersRes.rows.map(r => r.id);
       sendPushNotifications(targetIds, {
         title: '新しいスレッドが作成されました',
         body: `「${newThread.title}」（スレ主: 👑${newThread.author_name}）`,
+        tag: `thread-${newThread.id}`,
         threadId: newThread.id
       });
     }
@@ -440,16 +433,36 @@ app.patch('/api/threads/:id/readonly', requireAuth, async (req, res) => {
   }
 });
 
+// スレッド削除（作成者のみ・スレッド作成時のプッシュ通知も取り消し）
 app.delete('/api/threads/:id', requireAuth, async (req, res) => {
   const threadId = req.params.id;
   try {
-    const result = await pool.query(
-      'DELETE FROM threads WHERE id = $1 AND creator_id = $2 RETURNING id',
+    // 削除前にスレッド情報を取得（公開スレッドだった場合、通知取り消しを送るため）
+    const threadRes = await pool.query(
+      'SELECT title, is_private FROM threads WHERE id = $1 AND creator_id = $2',
       [threadId, req.session.userId]
     );
-    if (result.rows.length === 0) {
+    if (threadRes.rows.length === 0) {
       return res.status(403).json({ error: '削除権限がないか、スレッドが存在しません' });
     }
+    const thread = threadRes.rows[0];
+
+    // スレッド削除実行（関連コメント・いいねもCASCADEで削除）
+    await pool.query('DELETE FROM threads WHERE id = $1', [threadId]);
+
+    // 公開スレッドだった場合、作成者以外のユーザーにスレッド作成通知の取り消しを送信
+    if (!thread.is_private) {
+      const usersRes = await pool.query('SELECT id FROM users WHERE id != $1', [req.session.userId]);
+      const targetIds = usersRes.rows.map(r => r.id);
+      sendPushNotifications(targetIds, {
+        action: 'revoke',
+        title: `「${thread.title}」`,
+        body: 'スレッドが削除されました',
+        tag: `thread-${threadId}`,
+        threadId: null
+      });
+    }
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'スレッドの削除に失敗しました' });
@@ -477,15 +490,16 @@ app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'このスレッドは現在閲覧モードのため書き込みできません' });
     }
 
-    await pool.query(
+    const insertRes = await pool.query(
       `INSERT INTO comments (thread_id, user_id, author_name, content, image_data)
-       VALUES ($1, $2, $3, $4, $5)`,
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
       [threadId, req.session.userId, req.session.username, content ? content.trim() : '', imageData || null]
     );
+    const newCommentId = insertRes.rows[0].id;
 
     await pool.query('UPDATE threads SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [threadId]);
 
-    // 通知対象：スレッド作成者 ＋ そのスレッドに過去コメントした参加者（投稿者自身は除外）
+    // 通知対象：スレッド作成者 ＋ 過去コメント参加者（投稿者自身は除外）
     const participantsRes = await pool.query(`
       SELECT DISTINCT user_id FROM comments WHERE thread_id = $1 AND user_id != $2
     `, [threadId, req.session.userId]);
@@ -499,6 +513,7 @@ app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
     sendPushNotifications(Array.from(targetSet), {
       title: `「${thread.title}」に新着メッセージ`,
       body: `${req.session.username}: ${previewText}`,
+      tag: `comment-${newCommentId}`,
       threadId: thread.id
     });
 
@@ -508,11 +523,12 @@ app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
   }
 });
 
+// コメント削除（通知の取り消し＋「メッセージが削除されました」上書き送信）
 app.delete('/api/comments/:id', requireAuth, async (req, res) => {
   const commentId = req.params.id;
   try {
     const checkRes = await pool.query(`
-      SELECT c.user_id as comment_user_id, t.creator_id as thread_creator_id
+      SELECT c.user_id as comment_user_id, c.thread_id, t.creator_id as thread_creator_id, t.title as thread_title
       FROM comments c
       JOIN threads t ON c.thread_id = t.id
       WHERE c.id = $1
@@ -522,7 +538,7 @@ app.delete('/api/comments/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'コメントが見つかりません' });
     }
 
-    const { comment_user_id, thread_creator_id } = checkRes.rows[0];
+    const { comment_user_id, thread_id, thread_creator_id, thread_title } = checkRes.rows[0];
     if (req.session.userId !== comment_user_id && req.session.userId !== thread_creator_id) {
       return res.status(403).json({ error: 'このコメントを削除する権限がありません' });
     }
@@ -531,6 +547,25 @@ app.delete('/api/comments/:id', requireAuth, async (req, res) => {
       'UPDATE comments SET is_deleted = TRUE, content = NULL, image_data = NULL WHERE id = $1',
       [commentId]
     );
+
+    // 同じスレッドの関係者に「通知取り消し＆削除済み表示への上書き」プッシュを送信
+    const participantsRes = await pool.query(`
+      SELECT DISTINCT user_id FROM comments WHERE thread_id = $1 AND user_id != $2
+    `, [thread_id, comment_user_id]);
+
+    const targetSet = new Set(participantsRes.rows.map(r => r.user_id));
+    if (thread_creator_id !== comment_user_id) {
+      targetSet.add(thread_creator_id);
+    }
+
+    sendPushNotifications(Array.from(targetSet), {
+      action: 'revoke',
+      title: `「${thread_title}」`,
+      body: 'メッセージが削除されました',
+      tag: `comment-${commentId}`,
+      threadId: thread_id
+    });
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'コメントの削除に失敗しました' });
@@ -552,9 +587,8 @@ app.post('/api/comments/:id/like', requireAuth, async (req, res) => {
     } else {
       await pool.query('INSERT INTO likes (comment_id, user_id) VALUES ($1, $2)', [commentId, userId]);
 
-      // コメント投稿者本人以外がいいねを押した場合、コメント投稿者に通知を送る
       const commentInfo = await pool.query(`
-        SELECT c.user_id, c.content, c.thread_id, t.title
+        SELECT c.user_id, c.content, c.is_deleted, c.thread_id, t.title
         FROM comments c
         JOIN threads t ON c.thread_id = t.id
         WHERE c.id = $1
@@ -562,11 +596,12 @@ app.post('/api/comments/:id/like', requireAuth, async (req, res) => {
 
       if (commentInfo.rows.length > 0) {
         const target = commentInfo.rows[0];
-        if (target.user_id !== userId) {
+        if (target.user_id !== userId && !target.is_deleted) {
           const msgSnippet = target.content ? `「${target.content.slice(0, 25)}」` : 'あなたの画像投稿';
           sendPushNotifications([target.user_id], {
             title: 'コメントにいいね💕がつきました',
             body: `${req.session.username}さんが${msgSnippet}にいいねしました`,
+            tag: `like-${commentId}-${userId}`,
             threadId: target.thread_id
           });
         }

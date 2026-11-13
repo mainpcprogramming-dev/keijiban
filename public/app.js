@@ -5,10 +5,31 @@ let currentRoomCode = null;
 let pendingPrivateThreadId = null;
 let selectedImageBase64 = null;
 
+// 自動更新（ポーリング）管理用変数
+let threadPollTimer = null;
+let lastRenderedSnapshot = '';
+let lobbyPollTimer = null;
+let lastLobbySnapshot = '';
+
 // Service Workerの登録（プッシュ通知用）
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW登録失敗:', err));
 }
+
+// ブラウザタブの表示・非表示切り替わり時に自動更新を制御
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopAllPolling();
+  } else {
+    if (!document.getElementById('thread-view').classList.contains('hidden') && currentThreadId) {
+      loadThreadDetail(currentThreadId, currentRoomCode, true);
+      startThreadPolling();
+    } else if (!document.getElementById('lobby-view').classList.contains('hidden') && currentUser) {
+      loadLobby(true);
+      startLobbyPolling();
+    }
+  }
+});
 
 // スレッドごとの最終閲覧時刻を保存・取得するヘルパー
 function getSeenMap() {
@@ -40,7 +61,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     };
     showLoggedInUI();
 
-    // 通知クリック時のURLパラメータ(?thread=ID)があれば該当スレッドを開く
     const params = new URLSearchParams(window.location.search);
     const targetThread = params.get('thread');
     if (targetThread) {
@@ -55,6 +75,14 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 function showView(viewId) {
+  // 画面切り替え時は一度すべての自動更新タイマーをリセットする
+  stopAllPolling();
+  if (viewId !== 'thread-view') {
+    lastRenderedSnapshot = '';
+  }
+  if (viewId !== 'lobby-view') {
+    lastLobbySnapshot = '';
+  }
   document.querySelectorAll('.view').forEach(el => el.classList.add('hidden'));
   document.getElementById(viewId).classList.remove('hidden');
 }
@@ -63,6 +91,47 @@ function showLoggedInUI() {
   document.getElementById('header-user-area').classList.remove('hidden');
   document.getElementById('current-username').textContent = currentUser.username;
   document.getElementById('thread-author').value = currentUser.username;
+}
+
+// ==========================================
+// 自動更新タイマー制御（ロビー＆スレッド共通）
+// ==========================================
+
+function startLobbyPolling() {
+  stopLobbyPolling();
+  lobbyPollTimer = setInterval(() => {
+    if (currentUser && !document.hidden && !document.getElementById('lobby-view').classList.contains('hidden')) {
+      loadLobby(true);
+    }
+  }, 5000); // ロビーは5秒ごとに自動同期
+}
+
+function stopLobbyPolling() {
+  if (lobbyPollTimer) {
+    clearInterval(lobbyPollTimer);
+    lobbyPollTimer = null;
+  }
+}
+
+function startThreadPolling() {
+  stopThreadPolling();
+  threadPollTimer = setInterval(() => {
+    if (currentThreadId && !document.hidden && !document.getElementById('thread-view').classList.contains('hidden')) {
+      loadThreadDetail(currentThreadId, currentRoomCode, true);
+    }
+  }, 4000); // スレッド内は4秒ごとに自動同期
+}
+
+function stopThreadPolling() {
+  if (threadPollTimer) {
+    clearInterval(threadPollTimer);
+    threadPollTimer = null;
+  }
+}
+
+function stopAllPolling() {
+  stopLobbyPolling();
+  stopThreadPolling();
 }
 
 // ==========================================
@@ -108,6 +177,7 @@ async function handleAuth(e) {
 }
 
 async function logout() {
+  stopAllPolling();
   await fetch('/api/logout', { method: 'POST' });
   currentUser = null;
   document.getElementById('header-user-area').classList.add('hidden');
@@ -126,7 +196,6 @@ async function openSettings() {
   document.getElementById('show-pw-form-btn').classList.remove('hidden');
   document.getElementById('pw-change-error').textContent = '';
 
-  // 現在のブラウザの通知購読状態とDB設定を確認
   const toggleEl = document.getElementById('notification-toggle');
   const statusLabel = document.getElementById('notification-status-label');
 
@@ -274,22 +343,50 @@ async function confirmDeleteAccount() {
 }
 
 // ==========================================
-// ロビー画面
+// ロビー（ホーム）画面・自動更新対応
 // ==========================================
 
 function goLobby() {
   if (!currentUser) return;
   currentThreadId = null;
   currentRoomCode = null;
+  lastLobbySnapshot = '';
   showView('lobby-view');
-  loadLobby();
+  loadLobby(false);
+  startLobbyPolling();
 }
 
-async function loadLobby() {
-  const res = await fetch('/api/threads');
+async function loadLobby(isAutoPoll = false) {
+  let res;
+  try {
+    res = await fetch('/api/threads');
+  } catch {
+    return;
+  }
   if (!res.ok) return;
   const threads = await res.json();
   const seenMap = getSeenMap();
+
+  // スレッド一覧の並び順・更新時刻・コメント数・閲覧モード・既読状態からスナップショットを作成
+  const currentLobbySnapshot = JSON.stringify(
+    threads.map(t => {
+      const updatedTime = new Date(t.updated_at).getTime();
+      const lastSeenTime = seenMap[t.id] || 0;
+      return {
+        id: t.id,
+        title: t.title,
+        comment_count: t.comment_count,
+        is_readonly: t.is_readonly,
+        is_updated: updatedTime > lastSeenTime
+      };
+    })
+  );
+
+  // 自動更新時に変化がなければDOMを触らない（入力やスクロールを妨げない）
+  if (isAutoPoll && currentLobbySnapshot === lastLobbySnapshot) {
+    return;
+  }
+  lastLobbySnapshot = currentLobbySnapshot;
 
   const listEl = document.getElementById('thread-list');
   listEl.innerHTML = '';
@@ -366,7 +463,7 @@ async function createThread(e) {
 }
 
 // ==========================================
-// スレッド閲覧・更新・入室処理
+// スレッド閲覧・自動同期・入室処理
 // ==========================================
 
 function openThread(threadId, isPrivate, isCreator, knownCode = null) {
@@ -377,7 +474,7 @@ function openThread(threadId, isPrivate, isCreator, knownCode = null) {
     document.getElementById('room-modal').classList.remove('hidden');
     return;
   }
-  loadThreadDetail(threadId, knownCode);
+  loadThreadDetail(threadId, knownCode, false);
 }
 
 function closeModal() {
@@ -388,7 +485,7 @@ function closeModal() {
 async function submitRoomCode() {
   const code = document.getElementById('modal-room-input').value.trim();
   if (!code) return;
-  const success = await loadThreadDetail(pendingPrivateThreadId, code);
+  const success = await loadThreadDetail(pendingPrivateThreadId, code, false);
   if (success) {
     closeModal();
   }
@@ -396,31 +493,73 @@ async function submitRoomCode() {
 
 async function refreshCurrentThread() {
   if (!currentThreadId) return;
-  await loadThreadDetail(currentThreadId, currentRoomCode);
+  lastRenderedSnapshot = '';
+  await loadThreadDetail(currentThreadId, currentRoomCode, false);
 }
 
-async function loadThreadDetail(threadId, code = null) {
+async function loadThreadDetail(threadId, code = null, isAutoPoll = false) {
   const url = code ? `/api/threads/${threadId}?code=${encodeURIComponent(code)}` : `/api/threads/${threadId}`;
-  const res = await fetch(url);
+  let res;
+  try {
+    res = await fetch(url);
+  } catch {
+    return false;
+  }
+
+  if (res.status === 404 && isAutoPoll) {
+    stopThreadPolling();
+    alert('このスレッドは作成者によって削除されました。ホームに戻ります。');
+    goLobby();
+    return false;
+  }
+
   const data = await res.json();
 
   if (!res.ok) {
-    if (data.requireCode) {
-      document.getElementById('modal-error').textContent = data.error;
-    } else {
-      alert(data.error);
-      goLobby();
+    if (!isAutoPoll) {
+      if (data.requireCode) {
+        document.getElementById('modal-error').textContent = data.error;
+      } else {
+        alert(data.error);
+        goLobby();
+      }
     }
     return false;
   }
 
+  const currentSnapshot = JSON.stringify({
+    readonly: data.thread.is_readonly,
+    comments: data.comments.map(c => ({
+      id: c.id,
+      is_deleted: c.is_deleted,
+      like_count: c.like_count,
+      is_liked: c.is_liked
+    }))
+  });
+
+  const prevCommentCount = lastRenderedSnapshot ? JSON.parse(lastRenderedSnapshot).comments.length : 0;
+  const newCommentCount = data.comments.length;
+
   currentThreadId = threadId;
   currentRoomCode = code;
-
   markThreadAsSeen(threadId, data.thread.updated_at);
 
-  showView('thread-view');
-  renderThreadDetail(data);
+  if (!isAutoPoll) {
+    showView('thread-view');
+    startThreadPolling();
+  }
+
+  if (currentSnapshot !== lastRenderedSnapshot) {
+    const isNearBottom = (window.innerHeight + window.scrollY) >= (document.body.offsetHeight - 180);
+
+    lastRenderedSnapshot = currentSnapshot;
+    renderThreadDetail(data);
+
+    if (isAutoPoll && newCommentCount > prevCommentCount && isNearBottom) {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
+  }
+
   return true;
 }
 
@@ -556,28 +695,29 @@ async function postComment(e) {
 
   document.getElementById('comment-content').value = '';
   clearImage();
-  await loadThreadDetail(currentThreadId, currentRoomCode);
+  await loadThreadDetail(currentThreadId, currentRoomCode, false);
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 }
 
 async function deleteComment(commentId) {
   if (!confirm('このコメントを削除しますか？')) return;
   const res = await fetch(`/api/comments/${commentId}`, { method: 'DELETE' });
   if (res.ok) {
-    loadThreadDetail(currentThreadId, currentRoomCode);
+    loadThreadDetail(currentThreadId, currentRoomCode, false);
   }
 }
 
 async function toggleLike(commentId) {
   const res = await fetch(`/api/comments/${commentId}/like`, { method: 'POST' });
   if (res.ok) {
-    loadThreadDetail(currentThreadId, currentRoomCode);
+    loadThreadDetail(currentThreadId, currentRoomCode, false);
   }
 }
 
 async function toggleReadonly() {
   const res = await fetch(`/api/threads/${currentThreadId}/readonly`, { method: 'PATCH' });
   if (res.ok) {
-    loadThreadDetail(currentThreadId, currentRoomCode);
+    loadThreadDetail(currentThreadId, currentRoomCode, false);
   }
 }
 
