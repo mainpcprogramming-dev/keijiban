@@ -9,21 +9,17 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// PostgreSQL接続設定（Renderの環境変数 DATABASE_URL を使用）
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
 });
 
-// 画像データ(Base64)を受け取れるように上限を10MBに設定
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Renderのプロキシ背後でSecure Cookieを機能させる設定
 app.set('trust proxy', 1);
 
-// セッション設定（PostgreSQLにセッションを保存し、再起動してもログアウトしないようにする）
 app.use(session({
   store: new pgSession({
     pool: pool,
@@ -33,13 +29,13 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    maxAge: 30 * 24 * 60 * 60 * 1000, // 30日間ログイン状態を維持
+    maxAge: 30 * 24 * 60 * 60 * 1000,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax'
   }
 }));
 
-// データベース初期化（テーブル自動作成）
+// データベース初期化＆既存テーブルのマイグレーション
 async function initDB() {
   const client = await pool.connect();
   try {
@@ -59,7 +55,8 @@ async function initDB() {
         is_private BOOLEAN DEFAULT FALSE,
         room_code VARCHAR(10),
         is_readonly BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
       CREATE TABLE IF NOT EXISTS comments (
@@ -69,6 +66,7 @@ async function initDB() {
         author_name VARCHAR(50) NOT NULL,
         content TEXT,
         image_data TEXT,
+        is_deleted BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -79,6 +77,13 @@ async function initDB() {
         UNIQUE(comment_id, user_id)
       );
     `);
+
+    // 既存データベース向けに新しいカラムがなければ追加
+    await client.query(`
+      ALTER TABLE threads ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+      ALTER TABLE comments ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
+    `);
+
     console.log('データベースの初期化が完了しました');
   } catch (err) {
     console.error('DB初期化エラー:', err);
@@ -88,7 +93,6 @@ async function initDB() {
 }
 initDB();
 
-// ログイン確認ミドルウェア
 function requireAuth(req, res, next) {
   if (!req.session.userId) {
     return res.status(401).json({ error: 'ログインが必要です' });
@@ -96,7 +100,6 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// 4桁のランダム部屋番号生成
 function generateRoomCode() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
@@ -105,7 +108,6 @@ function generateRoomCode() {
 // 認証API
 // ==========================================
 
-// 現在のログイン状態取得
 app.get('/api/me', (req, res) => {
   if (req.session.userId) {
     res.json({ loggedIn: true, userId: req.session.userId, username: req.session.username });
@@ -114,7 +116,6 @@ app.get('/api/me', (req, res) => {
   }
 });
 
-// アカウント新規登録
 app.post('/api/register', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password || username.trim() === '' || password.trim() === '') {
@@ -130,14 +131,13 @@ app.post('/api/register', async (req, res) => {
     req.session.username = result.rows[0].username;
     res.json({ success: true, user: result.rows[0] });
   } catch (err) {
-    if (err.code === '23505') { // 一意性制約違反
+    if (err.code === '23505') {
       return res.status(400).json({ error: 'そのユーザー名は既に使用されています' });
     }
     res.status(500).json({ error: '登録中にエラーが発生しました' });
   }
 });
 
-// ログイン
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -161,7 +161,6 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// ログアウト
 app.post('/api/logout', (req, res) => {
   req.session.destroy();
   res.json({ success: true });
@@ -171,18 +170,19 @@ app.post('/api/logout', (req, res) => {
 // スレッドAPI
 // ==========================================
 
-// スレッド一覧取得（ロビー用）
+// スレッド一覧取得（updated_at の新しい順にソート）
 app.get('/api/threads', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT 
-        t.id, t.title, t.author_name, t.creator_id, t.is_private, t.is_readonly, t.created_at,
+        t.id, t.title, t.author_name, t.creator_id, t.is_private, t.is_readonly, 
+        t.created_at, COALESCE(t.updated_at, t.created_at) as updated_at,
         CASE WHEN t.creator_id = $1 THEN t.room_code ELSE NULL END as room_code,
         COUNT(c.id)::int as comment_count
       FROM threads t
       LEFT JOIN comments c ON t.id = c.thread_id
       GROUP BY t.id
-      ORDER BY t.created_at DESC
+      ORDER BY COALESCE(t.updated_at, t.created_at) DESC
     `, [req.session.userId]);
     res.json(result.rows);
   } catch (err) {
@@ -199,8 +199,8 @@ app.post('/api/threads', requireAuth, async (req, res) => {
   const roomCode = isPrivate ? generateRoomCode() : null;
   try {
     const result = await pool.query(
-      `INSERT INTO threads (title, author_name, creator_id, is_private, room_code)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      `INSERT INTO threads (title, author_name, creator_id, is_private, room_code, updated_at)
+       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP) RETURNING *`,
       [title.trim(), authorName.trim(), req.session.userId, !!isPrivate, roomCode]
     );
     res.json(result.rows[0]);
@@ -221,17 +221,15 @@ app.get('/api/threads/:id', requireAuth, async (req, res) => {
     }
     const thread = threadRes.rows[0];
 
-    // プライベートスレッドの閲覧権限チェック（作成者本人または正しい部屋番号）
     if (thread.is_private && thread.creator_id !== req.session.userId) {
       if (thread.room_code !== inputCode) {
         return res.status(403).json({ error: '部屋番号が正しくありません', requireCode: true });
       }
     }
 
-    // コメント一覧といいね数、自分がいいね済みかを取得
     const commentsRes = await pool.query(`
       SELECT 
-        c.id, c.thread_id, c.user_id, c.author_name, c.content, c.image_data, c.created_at,
+        c.id, c.thread_id, c.user_id, c.author_name, c.content, c.image_data, c.is_deleted, c.created_at,
         COUNT(l.id)::int as like_count,
         BOOL_OR(l.user_id = $1) as is_liked
       FROM comments c
@@ -241,7 +239,6 @@ app.get('/api/threads/:id', requireAuth, async (req, res) => {
       ORDER BY c.created_at ASC
     `, [req.session.userId, threadId]);
 
-    // 作成者以外にはroom_codeを隠す
     if (thread.creator_id !== req.session.userId) {
       delete thread.room_code;
     }
@@ -256,7 +253,7 @@ app.get('/api/threads/:id', requireAuth, async (req, res) => {
   }
 });
 
-// スレッドの閲覧モード切り替え（スレ主のみ）
+// 閲覧モード切り替え
 app.patch('/api/threads/:id/readonly', requireAuth, async (req, res) => {
   const threadId = req.params.id;
   try {
@@ -274,7 +271,7 @@ app.patch('/api/threads/:id/readonly', requireAuth, async (req, res) => {
   }
 });
 
-// スレッド削除（スレ主のみ）
+// スレッド削除
 app.delete('/api/threads/:id', requireAuth, async (req, res) => {
   const threadId = req.params.id;
   try {
@@ -295,7 +292,7 @@ app.delete('/api/threads/:id', requireAuth, async (req, res) => {
 // コメント・いいねAPI
 // ==========================================
 
-// コメント投稿
+// コメント投稿（同時にスレッドの updated_at を現在時刻に更新して上位表示させる）
 app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
   const threadId = req.params.id;
   const { content, imageData } = req.body;
@@ -308,7 +305,6 @@ app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
     const threadRes = await pool.query('SELECT * FROM threads WHERE id = $1', [threadId]);
     if (threadRes.rows.length === 0) return res.status(404).json({ error: 'スレッドが見つかりません' });
     
-    // 閲覧モードチェック
     if (threadRes.rows[0].is_readonly) {
       return res.status(403).json({ error: 'このスレッドは現在閲覧モードのため書き込みできません' });
     }
@@ -318,13 +314,17 @@ app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
        VALUES ($1, $2, $3, $4, $5)`,
       [threadId, req.session.userId, req.session.username, content ? content.trim() : '', imageData || null]
     );
+
+    // スレッドの更新日時を最新に更新
+    await pool.query('UPDATE threads SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [threadId]);
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'コメントの投稿に失敗しました' });
   }
 });
 
-// コメント削除（スレッド作成者 OR コメント送信者のみ）
+// コメント削除（論理削除に変更し「メッセージが削除されました」表示用データを残す）
 app.delete('/api/comments/:id', requireAuth, async (req, res) => {
   const commentId = req.params.id;
   try {
@@ -344,7 +344,10 @@ app.delete('/api/comments/:id', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'このコメントを削除する権限がありません' });
     }
 
-    await pool.query('DELETE FROM comments WHERE id = $1', [commentId]);
+    await pool.query(
+      'UPDATE comments SET is_deleted = TRUE, content = NULL, image_data = NULL WHERE id = $1',
+      [commentId]
+    );
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'コメントの削除に失敗しました' });

@@ -44,7 +44,6 @@
     <!-- 2. ロビー画面（スレッド作成 & 一覧） -->
     <section id="lobby-view" class="view hidden">
       <div class="lobby-grid">
-        <!-- スレッド作成フォーム -->
         <aside class="card create-thread-card">
           <h2>新しいスレッドを立てる</h2>
           <form id="create-thread-form" onsubmit="createThread(event)">
@@ -64,23 +63,24 @@
           </form>
         </aside>
 
-        <!-- スレッド一覧 -->
         <div class="thread-list-section">
           <div class="section-header">
             <h2>スレッド一覧</h2>
-            <button onclick="loadLobby()" class="btn btn-outline btn-sm">更新</button>
+            <button onclick="loadLobby()" class="btn btn-outline btn-sm">🔄 更新</button>
           </div>
-          <div id="thread-list" class="thread-list">
-            <!-- JSで動的に描画 -->
-          </div>
+          <div id="thread-list" class="thread-list"></div>
         </div>
       </div>
     </section>
 
     <!-- 3. スレッド詳細画面 -->
     <section id="thread-view" class="view hidden">
-      <div class="thread-nav">
-        <button onclick="goLobby()" class="btn btn-outline btn-sm">← ロビーに戻る</button>
+      <!-- 常時表示のナビゲーションバー -->
+      <div class="thread-nav sticky-thread-nav">
+        <div class="nav-left-actions">
+          <button onclick="goLobby()" class="btn btn-outline btn-sm">🏠 ホームに戻る</button>
+          <button onclick="refreshCurrentThread()" class="btn btn-outline btn-sm">🔄 更新</button>
+        </div>
         <div id="creator-controls" class="creator-controls hidden">
           <button id="toggle-readonly-btn" onclick="toggleReadonly()" class="btn btn-secondary btn-sm">閲覧モードにする</button>
           <button onclick="deleteThread()" class="btn btn-danger btn-sm">スレッド削除</button>
@@ -98,9 +98,7 @@
       </div>
 
       <!-- コメント一覧 -->
-      <div id="comments-list" class="comments-list">
-        <!-- JSで動的に描画 -->
-      </div>
+      <div id="comments-list" class="comments-list"></div>
 
       <!-- コメント投稿フォーム -->
       <div id="comment-form-container" class="card comment-form-card">

@@ -5,6 +5,24 @@ let currentRoomCode = null;
 let pendingPrivateThreadId = null;
 let selectedImageBase64 = null;
 
+// スレッドごとの最終閲覧時刻を保存・取得するヘルパー（更新ハイライト用）
+function getSeenMap() {
+  if (!currentUser) return {};
+  try {
+    return JSON.parse(localStorage.getItem(`seen_threads_${currentUser.id}`) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function markThreadAsSeen(threadId, updatedAt) {
+  if (!currentUser) return;
+  const map = getSeenMap();
+  const timestamp = updatedAt ? new Date(updatedAt).getTime() : Date.now();
+  map[threadId] = Math.max(Date.now(), timestamp);
+  localStorage.setItem(`seen_threads_${currentUser.id}`, JSON.stringify(map));
+}
+
 // 初期起動時のログイン確認
 window.addEventListener('DOMContentLoaded', async () => {
   const res = await fetch('/api/me');
@@ -18,7 +36,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
-// 画面切り替えヘルパー
 function showView(viewId) {
   document.querySelectorAll('.view').forEach(el => el.classList.add('hidden'));
   document.getElementById(viewId).classList.remove('hidden');
@@ -91,6 +108,7 @@ async function loadLobby() {
   const res = await fetch('/api/threads');
   if (!res.ok) return;
   const threads = await res.json();
+  const seenMap = getSeenMap();
 
   const listEl = document.getElementById('thread-list');
   listEl.innerHTML = '';
@@ -101,10 +119,17 @@ async function loadLobby() {
   }
 
   threads.forEach(t => {
+    const updatedTime = new Date(t.updated_at).getTime();
+    const lastSeenTime = seenMap[t.id] || 0;
+    const isUpdated = updatedTime > lastSeenTime;
+
     const item = document.createElement('div');
-    item.className = 'thread-item';
+    item.className = `thread-item ${isUpdated ? 'updated' : ''}`;
     
     let badges = '';
+    if (isUpdated) {
+      badges += `<span class="badge badge-updated">NEW</span> `;
+    }
     if (t.is_private) {
       badges += `<span class="badge badge-private">🔒 プライベート</span> `;
       if (t.room_code) {
@@ -121,7 +146,7 @@ async function loadLobby() {
         <div>${badges}</div>
       </div>
       <div class="thread-item-meta">
-        <span>スレ主: ${escapeHtml(t.author_name)}</span>
+        <span>スレ主: 👑${escapeHtml(t.author_name)}</span>
         <span>💬 ${t.comment_count}件</span>
       </div>
     `;
@@ -160,7 +185,7 @@ async function createThread(e) {
 }
 
 // ==========================================
-// スレッド閲覧・入室処理
+// スレッド閲覧・更新・入室処理
 // ==========================================
 
 function openThread(threadId, isPrivate, isCreator, knownCode = null) {
@@ -188,6 +213,11 @@ async function submitRoomCode() {
   }
 }
 
+async function refreshCurrentThread() {
+  if (!currentThreadId) return;
+  await loadThreadDetail(currentThreadId, currentRoomCode);
+}
+
 async function loadThreadDetail(threadId, code = null) {
   const url = code ? `/api/threads/${threadId}?code=${encodeURIComponent(code)}` : `/api/threads/${threadId}`;
   const res = await fetch(url);
@@ -204,6 +234,10 @@ async function loadThreadDetail(threadId, code = null) {
 
   currentThreadId = threadId;
   currentRoomCode = code;
+
+  // スレッドを確認したので既読としてマーク（ロビーに戻ったとき通常色に戻る）
+  markThreadAsSeen(threadId, data.thread.updated_at);
+
   showView('thread-view');
   renderThreadDetail(data);
   return true;
@@ -214,7 +248,7 @@ function renderThreadDetail(data) {
   const isCreator = thread.creator_id === currentUserId;
 
   document.getElementById('detail-title').textContent = thread.title;
-  document.getElementById('detail-author').textContent = thread.author_name;
+  document.getElementById('detail-author').textContent = `👑${thread.author_name}`;
 
   // バッジ表示
   document.getElementById('detail-private-badge').classList.toggle('hidden', !thread.is_private);
@@ -247,26 +281,41 @@ function renderThreadDetail(data) {
 
   comments.forEach(c => {
     const canDelete = isCreator || (c.user_id === currentUserId);
+    const isThreadCreatorComment = c.user_id === thread.creator_id;
+    const displayAuthor = isThreadCreatorComment ? `👑${c.author_name}` : c.author_name;
+
     const dateStr = new Date(c.created_at).toLocaleString('ja-JP', {
       month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
     });
 
     const card = document.createElement('div');
     card.className = 'comment-card';
-    card.innerHTML = `
-      <div class="comment-header">
-        <span class="comment-author">${escapeHtml(c.author_name)}</span>
-        <span>${dateStr}</span>
-      </div>
-      ${c.content ? `<div class="comment-body">${escapeHtml(c.content)}</div>` : ''}
-      ${c.image_data ? `<img src="${c.image_data}" class="comment-image" alt="添付画像">` : ''}
-      <div class="comment-footer">
-        <button class="like-btn ${c.is_liked ? 'liked' : ''}" onclick="toggleLike(${c.id})">
-          💕 <span>${c.like_count}</span>
-        </button>
-        ${canDelete ? `<button class="delete-comment-btn" onclick="deleteComment(${c.id})">削除</button>` : ''}
-      </div>
-    `;
+
+    if (c.is_deleted) {
+      card.innerHTML = `
+        <div class="comment-header">
+          <span class="comment-author">${escapeHtml(displayAuthor)}</span>
+          <span>${dateStr}</span>
+        </div>
+        <div class="deleted-message">メッセージが削除されました</div>
+      `;
+    } else {
+      card.innerHTML = `
+        <div class="comment-header">
+          <span class="comment-author">${escapeHtml(displayAuthor)}</span>
+          <span>${dateStr}</span>
+        </div>
+        ${c.content ? `<div class="comment-body">${escapeHtml(c.content)}</div>` : ''}
+        ${c.image_data ? `<img src="${c.image_data}" class="comment-image" alt="添付画像">` : ''}
+        <div class="comment-footer">
+          <button class="like-btn ${c.is_liked ? 'liked' : ''}" onclick="toggleLike(${c.id})">
+            💕 <span>${c.like_count}</span>
+          </button>
+          ${canDelete ? `<button class="delete-comment-btn" onclick="deleteComment(${c.id})">削除</button>` : ''}
+        </div>
+      `;
+    }
+
     listEl.appendChild(card);
   });
 }
@@ -281,7 +330,6 @@ function previewImage(e) {
 
   const reader = new FileReader();
   reader.onload = function(event) {
-    // Canvasで画像をリサイズ圧縮（最大幅800px）してDB負荷を軽減
     const img = new Image();
     img.onload = function() {
       const canvas = document.createElement('canvas');
@@ -331,7 +379,7 @@ async function postComment(e) {
 
   document.getElementById('comment-content').value = '';
   clearImage();
-  loadThreadDetail(currentThreadId, currentRoomCode);
+  await loadThreadDetail(currentThreadId, currentRoomCode);
 }
 
 async function deleteComment(commentId) {
@@ -364,7 +412,6 @@ async function deleteThread() {
   }
 }
 
-// XSS対策用エスケープ関数
 function escapeHtml(str) {
   if (!str) return '';
   return str.replace(/[&<>"']/g, m => ({

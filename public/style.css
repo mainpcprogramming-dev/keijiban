@@ -1,6 +1,8 @@
 :root {
   --bg-main: #f5f4f0;
   --bg-card: #ffffff;
+  --bg-updated: #eef4f0;
+  --border-updated: #9cb8a9;
   --text-main: #2f3437;
   --text-muted: #6e767d;
   --primary: #4a6b5d;
@@ -120,7 +122,7 @@ body {
 }
 
 .btn-outline {
-  background-color: transparent;
+  background-color: var(--bg-card);
   border: 1px solid var(--border);
   color: var(--text-main);
 }
@@ -256,7 +258,14 @@ input:focus, textarea:focus {
   border-radius: var(--radius);
   padding: 16px 20px;
   cursor: pointer;
-  transition: transform 0.15s, border-color 0.15s;
+  transition: transform 0.15s, border-color 0.15s, background-color 0.2s;
+}
+
+/* 更新されたスレッドの色変化 */
+.thread-item.updated {
+  background-color: var(--bg-updated);
+  border-color: var(--border-updated);
+  border-left: 4px solid var(--primary);
 }
 
 .thread-item:hover {
@@ -293,6 +302,11 @@ input:focus, textarea:focus {
   font-weight: 500;
 }
 
+.badge-updated {
+  background-color: var(--primary);
+  color: #fff;
+}
+
 .badge-private {
   background-color: #ebe6d8;
   color: #6b5e3c;
@@ -308,12 +322,26 @@ input:focus, textarea:focus {
   color: #555;
 }
 
-/* スレッド詳細画面 */
-.thread-nav {
+/* スレッド詳細画面・常時追従ナビバー */
+.sticky-thread-nav {
+  position: sticky;
+  top: 58px;
+  z-index: 90;
+  background-color: rgba(245, 244, 240, 0.94);
+  backdrop-filter: blur(4px);
+  padding: 10px 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nav-left-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .creator-controls {
@@ -373,6 +401,13 @@ input:focus, textarea:focus {
   white-space: pre-wrap;
   word-break: break-word;
   margin-bottom: 10px;
+}
+
+.deleted-message {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.9rem;
+  padding: 4px 0;
 }
 
 .comment-image {
