@@ -5,7 +5,12 @@ let currentRoomCode = null;
 let pendingPrivateThreadId = null;
 let selectedImageBase64 = null;
 
-// スレッドごとの最終閲覧時刻を保存・取得するヘルパー（更新ハイライト用）
+// Service Workerの登録（プッシュ通知用）
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW登録失敗:', err));
+}
+
+// スレッドごとの最終閲覧時刻を保存・取得するヘルパー
 function getSeenMap() {
   if (!currentUser) return {};
   try {
@@ -28,9 +33,22 @@ window.addEventListener('DOMContentLoaded', async () => {
   const res = await fetch('/api/me');
   const data = await res.json();
   if (data.loggedIn) {
-    currentUser = { id: data.userId, username: data.username };
+    currentUser = {
+      id: data.userId,
+      username: data.username,
+      notificationsEnabled: data.notificationsEnabled
+    };
     showLoggedInUI();
-    goLobby();
+
+    // 通知クリック時のURLパラメータ(?thread=ID)があれば該当スレッドを開く
+    const params = new URLSearchParams(window.location.search);
+    const targetThread = params.get('thread');
+    if (targetThread) {
+      window.history.replaceState({}, document.title, '/');
+      loadThreadDetail(targetThread);
+    } else {
+      goLobby();
+    }
   } else {
     showView('auth-view');
   }
@@ -79,7 +97,11 @@ async function handleAuth(e) {
     return;
   }
 
-  currentUser = data.user;
+  currentUser = {
+    id: data.user.id,
+    username: data.user.username,
+    notificationsEnabled: data.user.notifications_enabled ?? true
+  };
   document.getElementById('auth-form').reset();
   showLoggedInUI();
   goLobby();
@@ -87,6 +109,165 @@ async function handleAuth(e) {
 
 async function logout() {
   await fetch('/api/logout', { method: 'POST' });
+  currentUser = null;
+  document.getElementById('header-user-area').classList.add('hidden');
+  showView('auth-view');
+}
+
+// ==========================================
+// 設定画面（通知ON/OFF・パスワード変更・アカウント削除）
+// ==========================================
+
+async function openSettings() {
+  if (!currentUser) return;
+  showView('settings-view');
+  document.getElementById('settings-username').textContent = currentUser.username;
+  document.getElementById('password-change-form').classList.add('hidden');
+  document.getElementById('show-pw-form-btn').classList.remove('hidden');
+  document.getElementById('pw-change-error').textContent = '';
+
+  // 現在のブラウザの通知購読状態とDB設定を確認
+  const toggleEl = document.getElementById('notification-toggle');
+  const statusLabel = document.getElementById('notification-status-label');
+
+  let isBrowserSubscribed = false;
+  if ('serviceWorker' in navigator && 'PushManager' in window) {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    isBrowserSubscribed = !!sub;
+  }
+
+  const isOn = currentUser.notificationsEnabled && isBrowserSubscribed && Notification.permission === 'granted';
+  toggleEl.checked = isOn;
+  statusLabel.textContent = isOn ? '通知：オン（受信中）' : '通知：オフ';
+}
+
+async function handleNotificationToggle(e) {
+  const wantEnable = e.target.checked;
+  const toggleEl = e.target;
+  const statusLabel = document.getElementById('notification-status-label');
+
+  if (wantEnable) {
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      alert('お使いのブラウザはプッシュ通知に対応していません。\n※iPhone/iPadの場合は「ホーム画面に追加」してから開いてください。');
+      toggleEl.checked = false;
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      alert('ブラウザの通知許可がブロックされています。端末やブラウザの設定から通知を許可してください。');
+      toggleEl.checked = false;
+      return;
+    }
+
+    try {
+      const keyRes = await fetch('/api/push/vapid-public-key');
+      const { publicKey } = await keyRes.json();
+
+      const reg = await navigator.serviceWorker.ready;
+      const subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+
+      const subRes = await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription })
+      });
+
+      if (!subRes.ok) throw new Error('サーバー登録失敗');
+
+      currentUser.notificationsEnabled = true;
+      statusLabel.textContent = '通知：オン（受信中）';
+    } catch (err) {
+      console.error(err);
+      alert('プッシュ通知の有効化に失敗しました。');
+      toggleEl.checked = false;
+    }
+  } else {
+    try {
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) await sub.unsubscribe();
+      }
+      await fetch('/api/push/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: false })
+      });
+      currentUser.notificationsEnabled = false;
+      statusLabel.textContent = '通知：オフ';
+    } catch (err) {
+      console.error(err);
+    }
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+function togglePasswordForm() {
+  const form = document.getElementById('password-change-form');
+  const btn = document.getElementById('show-pw-form-btn');
+  const isHidden = form.classList.contains('hidden');
+  form.classList.toggle('hidden', !isHidden);
+  btn.classList.toggle('hidden', isHidden);
+  document.getElementById('pw-change-error').textContent = '';
+  form.reset();
+}
+
+async function submitPasswordChange(e) {
+  e.preventDefault();
+  const currentPassword = document.getElementById('current-password').value;
+  const newPassword = document.getElementById('new-password').value;
+  const errEl = document.getElementById('pw-change-error');
+  errEl.textContent = '';
+
+  const res = await fetch('/api/account/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword, newPassword })
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    errEl.textContent = data.error;
+    return;
+  }
+
+  alert('パスワードを変更しました。新しいパスワードで再度ログインしてください。');
+  currentUser = null;
+  document.getElementById('header-user-area').classList.add('hidden');
+  showView('auth-view');
+}
+
+function openDeleteAccountModal() {
+  document.getElementById('delete-account-modal').classList.remove('hidden');
+}
+
+function closeDeleteAccountModal() {
+  document.getElementById('delete-account-modal').classList.add('hidden');
+}
+
+async function confirmDeleteAccount() {
+  const res = await fetch('/api/account', { method: 'DELETE' });
+  closeDeleteAccountModal();
+  if (!res.ok) {
+    alert('アカウントの削除中にエラーが発生しました。');
+    return;
+  }
+  alert('アカウントとすべての投稿データを削除しました。');
   currentUser = null;
   document.getElementById('header-user-area').classList.add('hidden');
   showView('auth-view');
@@ -228,6 +409,7 @@ async function loadThreadDetail(threadId, code = null) {
       document.getElementById('modal-error').textContent = data.error;
     } else {
       alert(data.error);
+      goLobby();
     }
     return false;
   }
@@ -235,7 +417,6 @@ async function loadThreadDetail(threadId, code = null) {
   currentThreadId = threadId;
   currentRoomCode = code;
 
-  // スレッドを確認したので既読としてマーク（ロビーに戻ったとき通常色に戻る）
   markThreadAsSeen(threadId, data.thread.updated_at);
 
   showView('thread-view');
@@ -250,7 +431,6 @@ function renderThreadDetail(data) {
   document.getElementById('detail-title').textContent = thread.title;
   document.getElementById('detail-author').textContent = `👑${thread.author_name}`;
 
-  // バッジ表示
   document.getElementById('detail-private-badge').classList.toggle('hidden', !thread.is_private);
   const codeEl = document.getElementById('detail-room-code');
   if (thread.is_private && thread.room_code) {
@@ -261,7 +441,6 @@ function renderThreadDetail(data) {
   }
   document.getElementById('detail-readonly-badge').classList.toggle('hidden', !thread.is_readonly);
 
-  // スレ主専用コントロール
   const controls = document.getElementById('creator-controls');
   if (isCreator) {
     controls.classList.remove('hidden');
@@ -271,11 +450,9 @@ function renderThreadDetail(data) {
     controls.classList.add('hidden');
   }
 
-  // 閲覧モード時の投稿フォーム制御
   document.getElementById('comment-form-container').classList.toggle('hidden', thread.is_readonly);
   document.getElementById('readonly-notice').classList.toggle('hidden', !thread.is_readonly);
 
-  // コメント一覧描画
   const listEl = document.getElementById('comments-list');
   listEl.innerHTML = '';
 

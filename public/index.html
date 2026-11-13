@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Quiet Board - 落ち着いた掲示板</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#4a6b5d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,13 +16,14 @@
       <h1 class="logo" onclick="goLobby()">Quiet Board</h1>
       <div id="header-user-area" class="user-area hidden">
         <span id="current-username" class="username-badge"></span>
+        <button onclick="openSettings()" class="btn btn-outline btn-sm">⚙️ 設定</button>
         <button onclick="logout()" class="btn btn-outline btn-sm">ログアウト</button>
       </div>
     </div>
   </header>
 
   <main class="container">
-    <!-- 1. ホーム画面（ログイン / アカウント登録） -->
+    <!-- 1. 認証画面（ログイン / アカウント登録） -->
     <section id="auth-view" class="view">
       <div class="card auth-card">
         <div class="auth-tabs">
@@ -41,7 +46,7 @@
       </div>
     </section>
 
-    <!-- 2. ロビー画面（スレッド作成 & 一覧） -->
+    <!-- 2. ホーム（ロビー）画面 -->
     <section id="lobby-view" class="view hidden">
       <div class="lobby-grid">
         <aside class="card create-thread-card">
@@ -64,6 +69,21 @@
         </aside>
 
         <div class="thread-list-section">
+          <!-- アップデート情報ボックス（スクロール可能） -->
+          <div class="card update-info-card">
+            <div class="update-info-header">
+              <span>📢 アップデート情報</span>
+            </div>
+            <div class="update-info-scroll">
+              <ul class="update-info-list">
+                <li><strong>2026/11/13</strong> プッシュ通知機能（PC・Android・iPhone対応）を追加しました。ホーム右上の「⚙️ 設定」からオン・オフを切り替えられます。</li>
+                <li><strong>2026/11/13</strong> 「⚙️ 設定」画面からパスワード変更およびアカウントの完全削除ができるようになりました。</li>
+                <li><strong>2026/11/12</strong> 新着コメントがあるスレッドが上位に移動し、未確認の間は色が変わるように改善しました。</li>
+                <li><strong>2026/11/12</strong> スレッド製作者の名前の前に 👑 マークが表示されるようになりました。</li>
+              </ul>
+            </div>
+          </div>
+
           <div class="section-header">
             <h2>スレッド一覧</h2>
             <button onclick="loadLobby()" class="btn btn-outline btn-sm">🔄 更新</button>
@@ -75,7 +95,6 @@
 
     <!-- 3. スレッド詳細画面 -->
     <section id="thread-view" class="view hidden">
-      <!-- 常時表示のナビゲーションバー -->
       <div class="thread-nav sticky-thread-nav">
         <div class="nav-left-actions">
           <button onclick="goLobby()" class="btn btn-outline btn-sm">🏠 ホームに戻る</button>
@@ -97,10 +116,8 @@
         <p class="detail-sub">スレ主: <span id="detail-author"></span></p>
       </div>
 
-      <!-- コメント一覧 -->
       <div id="comments-list" class="comments-list"></div>
 
-      <!-- コメント投稿フォーム -->
       <div id="comment-form-container" class="card comment-form-card">
         <form id="comment-form" onsubmit="postComment(event)">
           <div class="form-group">
@@ -123,6 +140,75 @@
         このスレッドは現在「閲覧モード」のため、新しいコメントは投稿できません。
       </div>
     </section>
+
+    <!-- 4. 設定画面 -->
+    <section id="settings-view" class="view hidden">
+      <div class="thread-nav">
+        <button onclick="goLobby()" class="btn btn-outline btn-sm">🏠 ホームに戻る</button>
+      </div>
+
+      <div class="card settings-card">
+        <h2>⚙️ アカウント・通知設定</h2>
+
+        <!-- 通知設定 -->
+        <div class="settings-section">
+          <h3>🔔 プッシュ通知設定</h3>
+          <p class="settings-desc">新しいスレッド作成、スレッド内の新着メッセージ、自分のコメントへのいいね💕を通知します。</p>
+          <div class="notification-toggle-row">
+            <span id="notification-status-label" class="status-label">通知：オフ</span>
+            <label class="switch">
+              <input type="checkbox" id="notification-toggle" onchange="handleNotificationToggle(event)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <p class="ios-note">※ iPhone / iPad で通知を受け取る場合は、Safariの共有メニューから「ホーム画面に追加」したアプリからオンにしてください。</p>
+        </div>
+
+        <hr class="divider">
+
+        <!-- アカウント情報とパスワード変更 -->
+        <div class="settings-section">
+          <h3>👤 アカウント情報</h3>
+          <div class="account-info-box">
+            <div class="info-row">
+              <span class="info-label">アカウント名：</span>
+              <span id="settings-username" class="info-value"></span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">パスワード：</span>
+              <span class="info-value">********</span>
+            </div>
+          </div>
+
+          <button id="show-pw-form-btn" onclick="togglePasswordForm()" class="btn btn-secondary btn-sm">パスワードの変更</button>
+
+          <form id="password-change-form" class="password-change-form hidden" onsubmit="submitPasswordChange(event)">
+            <div class="form-group">
+              <label for="current-password">現在のパスワード</label>
+              <input type="password" id="current-password" required placeholder="現在のパスワードを入力">
+            </div>
+            <div class="form-group">
+              <label for="new-password">新しいパスワード</label>
+              <input type="password" id="new-password" required placeholder="新しいパスワードを入力">
+            </div>
+            <p id="pw-change-error" class="error-text"></p>
+            <div class="form-actions-inline">
+              <button type="button" onclick="togglePasswordForm()" class="btn btn-outline btn-sm">キャンセル</button>
+              <button type="submit" class="btn btn-primary btn-sm">更新する（即ログアウトされます）</button>
+            </div>
+          </form>
+        </div>
+
+        <hr class="divider">
+
+        <!-- アカウント削除 -->
+        <div class="settings-section danger-zone">
+          <h3>⚠️ アカウント削除</h3>
+          <p class="settings-desc">アカウントを削除すると、ユーザー情報・作成したスレッド・投稿したコメント・いいねがすべて完全に削除されます。</p>
+          <button onclick="openDeleteAccountModal()" class="btn btn-danger">アカウントを削除する</button>
+        </div>
+      </div>
+    </section>
   </main>
 
   <!-- プライベート部屋番号入力モーダル -->
@@ -137,6 +223,18 @@
       <div class="modal-actions">
         <button onclick="closeModal()" class="btn btn-outline">キャンセル</button>
         <button onclick="submitRoomCode()" class="btn btn-primary">入室する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- アカウント削除 警告確認モーダル -->
+  <div id="delete-account-modal" class="modal hidden">
+    <div class="modal-content card">
+      <h3 style="color: var(--danger);">⚠️ 最終確認：アカウント削除</h3>
+      <p>本当にアカウントを削除しますか？<br>ユーザー名、パスワード、あなたが投稿したすべてのスレッド・コメント・いいねが完全に消去され、元に戻すことはできません。</p>
+      <div class="modal-actions">
+        <button onclick="closeDeleteAccountModal()" class="btn btn-outline">いいえ</button>
+        <button onclick="confirmDeleteAccount()" class="btn btn-danger">はい</button>
       </div>
     </div>
   </div>

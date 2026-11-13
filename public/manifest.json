@@ -1,0 +1,9 @@
+{
+  "name": "Quiet Board",
+  "short_name": "QuietBoard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f4f0",
+  "theme_color": "#4a6b5d",
+  "description": "落ち着いたデザインの掲示板アプリ"
+}
