@@ -473,6 +473,7 @@ app.delete('/api/threads/:id', requireAuth, async (req, res) => {
 // コメント・いいねAPI
 // ==========================================
 
+// コメント投稿（通知本文にメッセージ内容を含めず、プライバシーを保護）
 app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
   const threadId = req.params.id;
   const { content, imageData } = req.body;
@@ -509,10 +510,10 @@ app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
       targetSet.add(thread.creator_id);
     }
 
-    const previewText = content && content.trim() ? content.trim().slice(0, 40) : '画像が添付されました';
+    // メッセージの具体的な内容は通知に乗せず、スレッドを開いて確認させる形式にする
     sendPushNotifications(Array.from(targetSet), {
-      title: `「${thread.title}」に新着メッセージ`,
-      body: `${req.session.username}: ${previewText}`,
+      title: `「${thread.title}」`,
+      body: `${req.session.username}さんが新しいメッセージを投稿しました`,
       tag: `comment-${newCommentId}`,
       threadId: thread.id
     });
@@ -520,6 +521,46 @@ app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'コメントの投稿に失敗しました' });
+  }
+});
+
+// コメント削除（通知センター上の該当通知を消去する指令を送信）
+app.delete('/api/comments/:id', requireAuth, async (req, res) => {
+  const commentId = req.params.id;
+  try {
+    const checkRes = await pool.query(`
+      SELECT c.user_id as comment_user_id, c.thread_id, t.creator_id as thread_creator_id
+      FROM comments c
+      JOIN threads t ON c.thread_id = t.id
+      WHERE c.id = $1
+    `, [commentId]);
+
+    if (checkRes.rows.length === 0) {
+      return res.status(404).json({ error: 'コメントが見つかりません' });
+    }
+
+    const { comment_user_id, thread_id, thread_creator_id } = checkRes.rows[0];
+    if (req.session.userId !== comment_user_id && req.session.userId !== thread_creator_id) {
+      return res.status(403).json({ error: 'このコメントを削除する権限がありません' });
+    }
+
+    await pool.query(
+      'UPDATE comments SET is_deleted = TRUE, content = NULL, image_data = NULL WHERE id = $1',
+      [commentId]
+    );
+
+    // 該当コメントの通知をブラウザ側から閉じる指令を送る（削除実行者以外の全ユーザー対象）
+    const usersRes = await pool.query('SELECT id FROM users WHERE id != $1', [req.session.userId]);
+    const targetIds = usersRes.rows.map(r => r.id);
+
+    sendPushNotifications(targetIds, {
+      action: 'revoke',
+      tag: `comment-${commentId}`
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'コメントの削除に失敗しました' });
   }
 });
 

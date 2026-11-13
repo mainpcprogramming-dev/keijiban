@@ -8,21 +8,12 @@ self.addEventListener('push', function(event) {
     }
   }
 
-  // メッセージ・スレッド削除時の通知取り消し＆上書き処理
+  // メッセージ・スレッド削除時の通知消去処理
   if (data.action === 'revoke') {
     event.waitUntil(
       self.registration.getNotifications({ tag: data.tag }).then(function(notifications) {
-        // 画面や通知センターに表示中の該当通知をすべて閉じる
         notifications.forEach(function(notification) {
           notification.close();
-        });
-        // OSの仕様上バックグラウンド受信で表示が必要な場合も、内容は「削除されました」に上書きする
-        return self.registration.showNotification(data.title || 'Quiet Board', {
-          body: data.body || '削除されました',
-          tag: data.tag,
-          renotify: false,
-          silent: true,
-          data: { threadId: null }
         });
       })
     );
