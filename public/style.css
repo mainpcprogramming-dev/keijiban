@@ -3,6 +3,8 @@
   --bg-card: #ffffff;
   --bg-updated: #eef4f0;
   --border-updated: #9cb8a9;
+  --bg-blocked: #e5e4df;
+  --border-blocked: #c9c7be;
   --text-main: #2f3437;
   --text-muted: #6e767d;
   --primary: #4a6b5d;
@@ -237,7 +239,7 @@ input:focus, textarea:focus {
   color: var(--primary);
 }
 
-/* アップデート情報ボックス（スクロール可能） */
+/* アップデート情報ボックス */
 .update-info-card {
   padding: 14px 18px;
   margin-bottom: 20px;
@@ -304,6 +306,20 @@ input:focus, textarea:focus {
   border-left: 4px solid var(--primary);
 }
 
+/* ブロックされたスレッドの見た目（一番下に配置・グレーアウト・操作不可） */
+.thread-item.blocked {
+  background-color: var(--bg-blocked);
+  border-color: var(--border-blocked);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.82;
+}
+
+.thread-item.blocked:hover {
+  border-color: var(--border-blocked);
+  transform: none;
+}
+
 .thread-item:hover {
   border-color: var(--primary);
   transform: translateY(-1px);
@@ -340,6 +356,11 @@ input:focus, textarea:focus {
 
 .badge-updated {
   background-color: var(--primary);
+  color: #fff;
+}
+
+.badge-blocked {
+  background-color: #7c7a72;
   color: #fff;
 }
 
@@ -383,6 +404,7 @@ input:focus, textarea:focus {
 .creator-controls {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .thread-header-card {
@@ -461,6 +483,12 @@ input:focus, textarea:focus {
   margin-top: 10px;
 }
 
+.comment-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .like-btn {
   background: #faf9f6;
   border: 1px solid var(--border);
@@ -478,6 +506,19 @@ input:focus, textarea:focus {
   background: #fdf0f0;
   border-color: #e6b8b8;
   color: #b84a4a;
+}
+
+.block-user-btn {
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: 0.8rem;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.block-user-btn:hover {
+  opacity: 1;
+  text-decoration: underline;
 }
 
 .delete-comment-btn {
@@ -530,9 +571,30 @@ input:focus, textarea:focus {
   font-size: 0.9rem;
 }
 
-/* ==========================================
-   設定画面
-========================================== */
+/* ブロックユーザーリスト（モーダル内） */
+.blocked-users-list {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: #faf9f6;
+}
+
+.blocked-user-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 0.9rem;
+}
+.blocked-user-row:last-child {
+  border-bottom: none;
+}
+
+/* 設定画面 */
 .settings-card {
   max-width: 600px;
   margin: 12px auto;
@@ -608,7 +670,6 @@ input:focus, textarea:focus {
   gap: 8px;
 }
 
-/* 通知トグルスイッチ */
 .notification-toggle-row {
   display: flex;
   justify-content: space-between;

@@ -92,6 +92,14 @@ async function initDB() {
         subscription_json TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS thread_blocks (
+        id SERIAL PRIMARY KEY,
+        thread_id INTEGER REFERENCES threads(id) ON DELETE CASCADE,
+        blocked_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(thread_id, blocked_user_id)
+      );
     `);
 
     await client.query(`
@@ -323,6 +331,7 @@ app.post('/api/push/toggle', requireAuth, async (req, res) => {
 // スレッドAPI
 // ==========================================
 
+// スレッド一覧取得（ブロックされたスレッドは一番下に配置）
 app.get('/api/threads', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -330,11 +339,13 @@ app.get('/api/threads', requireAuth, async (req, res) => {
         t.id, t.title, t.author_name, t.creator_id, t.is_private, t.is_readonly, 
         t.created_at, COALESCE(t.updated_at, t.created_at) as updated_at,
         CASE WHEN t.creator_id = $1 THEN t.room_code ELSE NULL END as room_code,
-        COUNT(c.id)::int as comment_count
+        COUNT(c.id)::int as comment_count,
+        BOOL_OR(tb.id IS NOT NULL) as is_blocked
       FROM threads t
       LEFT JOIN comments c ON t.id = c.thread_id
+      LEFT JOIN thread_blocks tb ON t.id = tb.thread_id AND tb.blocked_user_id = $1
       GROUP BY t.id
-      ORDER BY COALESCE(t.updated_at, t.created_at) DESC
+      ORDER BY BOOL_OR(tb.id IS NOT NULL) ASC, COALESCE(t.updated_at, t.created_at) DESC
     `, [req.session.userId]);
     res.json(result.rows);
   } catch (err) {
@@ -373,6 +384,7 @@ app.post('/api/threads', requireAuth, async (req, res) => {
   }
 });
 
+// スレッド詳細＆コメント一覧取得（ブロックチェック付き）
 app.get('/api/threads/:id', requireAuth, async (req, res) => {
   const threadId = req.params.id;
   const inputCode = req.query.code;
@@ -383,6 +395,15 @@ app.get('/api/threads/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'スレッドが見つかりません' });
     }
     const thread = threadRes.rows[0];
+
+    // ブロックされているユーザーは閲覧不可
+    const blockCheck = await pool.query(
+      'SELECT id FROM thread_blocks WHERE thread_id = $1 AND blocked_user_id = $2',
+      [threadId, req.session.userId]
+    );
+    if (blockCheck.rows.length > 0) {
+      return res.status(403).json({ error: 'このスレッドへのアクセスは制限されています', blocked: true });
+    }
 
     if (thread.is_private && thread.creator_id !== req.session.userId) {
       if (thread.room_code !== inputCode) {
@@ -402,17 +423,81 @@ app.get('/api/threads/:id', requireAuth, async (req, res) => {
       ORDER BY c.created_at ASC
     `, [req.session.userId, threadId]);
 
-    if (thread.creator_id !== req.session.userId) {
+    // スレッド作成者の場合はブロック中ユーザー一覧も返す
+    let blockedUsers = [];
+    if (thread.creator_id === req.session.userId) {
+      const blockedRes = await pool.query(`
+        SELECT u.id, u.username
+        FROM thread_blocks tb
+        JOIN users u ON tb.blocked_user_id = u.id
+        WHERE tb.thread_id = $1
+        ORDER BY tb.created_at DESC
+      `, [threadId]);
+      blockedUsers = blockedRes.rows;
+    } else {
       delete thread.room_code;
     }
 
     res.json({
       thread,
       comments: commentsRes.rows,
-      currentUserId: req.session.userId
+      currentUserId: req.session.userId,
+      blockedUsers
     });
   } catch (err) {
     res.status(500).json({ error: 'スレッドの読み込みに失敗しました' });
+  }
+});
+
+// ユーザーブロック追加（スレッド製作者のみ）
+app.post('/api/threads/:id/block', requireAuth, async (req, res) => {
+  const threadId = req.params.id;
+  const { targetUserId } = req.body;
+
+  if (!targetUserId) {
+    return res.status(400).json({ error: '対象ユーザーが指定されていません' });
+  }
+
+  try {
+    const threadRes = await pool.query('SELECT creator_id FROM threads WHERE id = $1', [threadId]);
+    if (threadRes.rows.length === 0) return res.status(404).json({ error: 'スレッドが見つかりません' });
+
+    if (threadRes.rows[0].creator_id !== req.session.userId) {
+      return res.status(403).json({ error: 'ブロック権限がありません' });
+    }
+
+    if (Number(targetUserId) === req.session.userId) {
+      return res.status(400).json({ error: '自分自身はブロックできません' });
+    }
+
+    await pool.query(
+      'INSERT INTO thread_blocks (thread_id, blocked_user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [threadId, targetUserId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'ブロック処理に失敗しました' });
+  }
+});
+
+// ユーザーブロック解除（スレッド製作者のみ）
+app.delete('/api/threads/:id/block/:userId', requireAuth, async (req, res) => {
+  const { id: threadId, userId: targetUserId } = req.params;
+  try {
+    const threadRes = await pool.query('SELECT creator_id FROM threads WHERE id = $1', [threadId]);
+    if (threadRes.rows.length === 0) return res.status(404).json({ error: 'スレッドが見つかりません' });
+
+    if (threadRes.rows[0].creator_id !== req.session.userId) {
+      return res.status(403).json({ error: '権限がありません' });
+    }
+
+    await pool.query(
+      'DELETE FROM thread_blocks WHERE thread_id = $1 AND blocked_user_id = $2',
+      [threadId, targetUserId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'ブロック解除に失敗しました' });
   }
 });
 
@@ -433,11 +518,10 @@ app.patch('/api/threads/:id/readonly', requireAuth, async (req, res) => {
   }
 });
 
-// スレッド削除（作成者のみ・スレッド作成時のプッシュ通知も取り消し）
+// スレッド削除（作成者のみ・スレッド削除通知を送信）
 app.delete('/api/threads/:id', requireAuth, async (req, res) => {
   const threadId = req.params.id;
   try {
-    // 削除前にスレッド情報を取得（公開スレッドだった場合、通知取り消しを送るため）
     const threadRes = await pool.query(
       'SELECT title, is_private FROM threads WHERE id = $1 AND creator_id = $2',
       [threadId, req.session.userId]
@@ -447,10 +531,8 @@ app.delete('/api/threads/:id', requireAuth, async (req, res) => {
     }
     const thread = threadRes.rows[0];
 
-    // スレッド削除実行（関連コメント・いいねもCASCADEで削除）
     await pool.query('DELETE FROM threads WHERE id = $1', [threadId]);
 
-    // 公開スレッドだった場合、作成者以外のユーザーにスレッド作成通知の取り消しを送信
     if (!thread.is_private) {
       const usersRes = await pool.query('SELECT id FROM users WHERE id != $1', [req.session.userId]);
       const targetIds = usersRes.rows.map(r => r.id);
@@ -473,7 +555,6 @@ app.delete('/api/threads/:id', requireAuth, async (req, res) => {
 // コメント・いいねAPI
 // ==========================================
 
-// コメント投稿（通知本文にメッセージ内容を含めず、プライバシーを保護）
 app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
   const threadId = req.params.id;
   const { content, imageData } = req.body;
@@ -486,6 +567,15 @@ app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
     const threadRes = await pool.query('SELECT * FROM threads WHERE id = $1', [threadId]);
     if (threadRes.rows.length === 0) return res.status(404).json({ error: 'スレッドが見つかりません' });
     const thread = threadRes.rows[0];
+
+    // ブロックチェック
+    const blockCheck = await pool.query(
+      'SELECT id FROM thread_blocks WHERE thread_id = $1 AND blocked_user_id = $2',
+      [threadId, req.session.userId]
+    );
+    if (blockCheck.rows.length > 0) {
+      return res.status(403).json({ error: 'このスレッドへの書き込みは制限されています', blocked: true });
+    }
     
     if (thread.is_readonly) {
       return res.status(403).json({ error: 'このスレッドは現在閲覧モードのため書き込みできません' });
@@ -500,9 +590,12 @@ app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
 
     await pool.query('UPDATE threads SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [threadId]);
 
-    // 通知対象：スレッド作成者 ＋ 過去コメント参加者（投稿者自身は除外）
+    // 通知対象：スレッド作成者 ＋ 過去コメント参加者（投稿者自身とブロック済みユーザーは除外）
     const participantsRes = await pool.query(`
-      SELECT DISTINCT user_id FROM comments WHERE thread_id = $1 AND user_id != $2
+      SELECT DISTINCT c.user_id 
+      FROM comments c
+      LEFT JOIN thread_blocks tb ON c.thread_id = tb.thread_id AND c.user_id = tb.blocked_user_id
+      WHERE c.thread_id = $1 AND c.user_id != $2 AND tb.id IS NULL
     `, [threadId, req.session.userId]);
     
     const targetSet = new Set(participantsRes.rows.map(r => r.user_id));
@@ -510,10 +603,10 @@ app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
       targetSet.add(thread.creator_id);
     }
 
-    // メッセージの具体的な内容は通知に乗せず、スレッドを開いて確認させる形式にする
+    const previewText = content && content.trim() ? content.trim().slice(0, 40) : '画像が添付されました';
     sendPushNotifications(Array.from(targetSet), {
-      title: `「${thread.title}」`,
-      body: `${req.session.username}さんが新しいメッセージを投稿しました`,
+      title: `「${thread.title}」に新着メッセージ`,
+      body: `${req.session.username}: ${previewText}`,
       tag: `comment-${newCommentId}`,
       threadId: thread.id
     });
@@ -524,12 +617,12 @@ app.post('/api/threads/:id/comments', requireAuth, async (req, res) => {
   }
 });
 
-// コメント削除（通知センター上の該当通知を消去する指令を送信）
+// コメント削除（削除時はプッシュ通知を一切送信しない）
 app.delete('/api/comments/:id', requireAuth, async (req, res) => {
   const commentId = req.params.id;
   try {
     const checkRes = await pool.query(`
-      SELECT c.user_id as comment_user_id, c.thread_id, t.creator_id as thread_creator_id
+      SELECT c.user_id as comment_user_id, t.creator_id as thread_creator_id
       FROM comments c
       JOIN threads t ON c.thread_id = t.id
       WHERE c.id = $1
@@ -539,7 +632,7 @@ app.delete('/api/comments/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'コメントが見つかりません' });
     }
 
-    const { comment_user_id, thread_id, thread_creator_id } = checkRes.rows[0];
+    const { comment_user_id, thread_creator_id } = checkRes.rows[0];
     if (req.session.userId !== comment_user_id && req.session.userId !== thread_creator_id) {
       return res.status(403).json({ error: 'このコメントを削除する権限がありません' });
     }
@@ -548,64 +641,6 @@ app.delete('/api/comments/:id', requireAuth, async (req, res) => {
       'UPDATE comments SET is_deleted = TRUE, content = NULL, image_data = NULL WHERE id = $1',
       [commentId]
     );
-
-    // 該当コメントの通知をブラウザ側から閉じる指令を送る（削除実行者以外の全ユーザー対象）
-    const usersRes = await pool.query('SELECT id FROM users WHERE id != $1', [req.session.userId]);
-    const targetIds = usersRes.rows.map(r => r.id);
-
-    sendPushNotifications(targetIds, {
-      action: 'revoke',
-      tag: `comment-${commentId}`
-    });
-
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: 'コメントの削除に失敗しました' });
-  }
-});
-
-// コメント削除（通知の取り消し＋「メッセージが削除されました」上書き送信）
-app.delete('/api/comments/:id', requireAuth, async (req, res) => {
-  const commentId = req.params.id;
-  try {
-    const checkRes = await pool.query(`
-      SELECT c.user_id as comment_user_id, c.thread_id, t.creator_id as thread_creator_id, t.title as thread_title
-      FROM comments c
-      JOIN threads t ON c.thread_id = t.id
-      WHERE c.id = $1
-    `, [commentId]);
-
-    if (checkRes.rows.length === 0) {
-      return res.status(404).json({ error: 'コメントが見つかりません' });
-    }
-
-    const { comment_user_id, thread_id, thread_creator_id, thread_title } = checkRes.rows[0];
-    if (req.session.userId !== comment_user_id && req.session.userId !== thread_creator_id) {
-      return res.status(403).json({ error: 'このコメントを削除する権限がありません' });
-    }
-
-    await pool.query(
-      'UPDATE comments SET is_deleted = TRUE, content = NULL, image_data = NULL WHERE id = $1',
-      [commentId]
-    );
-
-    // 同じスレッドの関係者に「通知取り消し＆削除済み表示への上書き」プッシュを送信
-    const participantsRes = await pool.query(`
-      SELECT DISTINCT user_id FROM comments WHERE thread_id = $1 AND user_id != $2
-    `, [thread_id, comment_user_id]);
-
-    const targetSet = new Set(participantsRes.rows.map(r => r.user_id));
-    if (thread_creator_id !== comment_user_id) {
-      targetSet.add(thread_creator_id);
-    }
-
-    sendPushNotifications(Array.from(targetSet), {
-      action: 'revoke',
-      title: `「${thread_title}」`,
-      body: 'メッセージが削除されました',
-      tag: `comment-${commentId}`,
-      threadId: thread_id
-    });
 
     res.json({ success: true });
   } catch (err) {
@@ -618,6 +653,16 @@ app.post('/api/comments/:id/like', requireAuth, async (req, res) => {
   const userId = req.session.userId;
 
   try {
+    // ブロックチェック
+    const blockCheck = await pool.query(`
+      SELECT tb.id FROM thread_blocks tb
+      JOIN comments c ON c.thread_id = tb.thread_id
+      WHERE c.id = $1 AND tb.blocked_user_id = $2
+    `, [commentId, userId]);
+    if (blockCheck.rows.length > 0) {
+      return res.status(403).json({ error: 'アクセスが制限されています' });
+    }
+
     const existing = await pool.query(
       'SELECT id FROM likes WHERE comment_id = $1 AND user_id = $2',
       [commentId, userId]

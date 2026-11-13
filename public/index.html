@@ -76,8 +76,9 @@
             </div>
             <div class="update-info-scroll">
               <ul class="update-info-list">
+                <li><strong>2026/11/13</strong> スレッド製作者専用の「ユーザーブロック機能」を追加しました。ブロックされたユーザーはそのスレッドを閲覧できなくなり、一覧の一番下にグレー表示されます。</li>
+                <li><strong>2026/11/13</strong> メッセージ削除時はプッシュ通知が送られないようにし、スレッドが削除された場合のみ通知が届くよう調整しました。</li>
                 <li><strong>2026/11/13</strong> ホーム（ロビー）画面とスレッド詳細画面に自動更新機能を追加しました。更新ボタンを押さなくても、新規スレッド・新着コメント・いいね・削除が自動でリアルタイム反映されます。</li>
-                <li><strong>2026/11/13</strong> 誤送信したメッセージやスレッドを削除した場合、送信済みのプッシュ通知も取り消され「メッセージが削除されました」等に切り替わるようになりました。</li>
                 <li><strong>2026/11/13</strong> プッシュ通知機能（PC・Android・iPhone対応）を追加しました。ホーム右上の「⚙️ 設定」からオン・オフを切り替えられます。</li>
                 <li><strong>2026/11/13</strong> 「⚙️ 設定」画面からパスワード変更およびアカウントの完全削除ができるようになりました。</li>
                 <li><strong>2026/11/12</strong> 新着コメントがあるスレッドが上位に移動し、未確認の間は色が変わるように改善しました。</li>
@@ -103,6 +104,7 @@
           <button onclick="refreshCurrentThread()" class="btn btn-outline btn-sm">🔄 更新</button>
         </div>
         <div id="creator-controls" class="creator-controls hidden">
+          <button id="manage-blocks-btn" onclick="openBlockedUsersModal()" class="btn btn-outline btn-sm">🚫 ブロック管理 (<span id="blocked-count">0</span>)</button>
           <button id="toggle-readonly-btn" onclick="toggleReadonly()" class="btn btn-secondary btn-sm">閲覧モードにする</button>
           <button onclick="deleteThread()" class="btn btn-danger btn-sm">スレッド削除</button>
         </div>
@@ -152,7 +154,6 @@
       <div class="card settings-card">
         <h2>⚙️ アカウント・通知設定</h2>
 
-        <!-- 通知設定 -->
         <div class="settings-section">
           <h3>🔔 プッシュ通知設定</h3>
           <p class="settings-desc">新しいスレッド作成、スレッド内の新着メッセージ、自分のコメントへのいいね💕を通知します。</p>
@@ -168,7 +169,6 @@
 
         <hr class="divider">
 
-        <!-- アカウント情報とパスワード変更 -->
         <div class="settings-section">
           <h3>👤 アカウント情報</h3>
           <div class="account-info-box">
@@ -203,7 +203,6 @@
 
         <hr class="divider">
 
-        <!-- アカウント削除 -->
         <div class="settings-section danger-zone">
           <h3>⚠️ アカウント削除</h3>
           <p class="settings-desc">アカウントを削除すると、ユーザー情報・作成したスレッド・投稿したコメント・いいねがすべて完全に削除されます。</p>
@@ -225,6 +224,18 @@
       <div class="modal-actions">
         <button onclick="closeModal()" class="btn btn-outline">キャンセル</button>
         <button onclick="submitRoomCode()" class="btn btn-primary">入室する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ブロックユーザー管理モーダル（スレ主専用） -->
+  <div id="blocked-users-modal" class="modal hidden">
+    <div class="modal-content card">
+      <h3>🚫 このスレッドのブロック管理</h3>
+      <p>ブロック中のユーザーはこのスレッドを開けなくなります。解除することもできます。</p>
+      <div id="blocked-users-list" class="blocked-users-list"></div>
+      <div class="modal-actions">
+        <button onclick="closeBlockedUsersModal()" class="btn btn-primary btn-sm">閉じる</button>
       </div>
     </div>
   </div>

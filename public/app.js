@@ -4,6 +4,7 @@ let currentThreadId = null;
 let currentRoomCode = null;
 let pendingPrivateThreadId = null;
 let selectedImageBase64 = null;
+let currentBlockedUsers = [];
 
 // 自動更新（ポーリング）管理用変数
 let threadPollTimer = null;
@@ -11,12 +12,10 @@ let lastRenderedSnapshot = '';
 let lobbyPollTimer = null;
 let lastLobbySnapshot = '';
 
-// Service Workerの登録（プッシュ通知用）
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW登録失敗:', err));
 }
 
-// ブラウザタブの表示・非表示切り替わり時に自動更新を制御
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     stopAllPolling();
@@ -31,7 +30,6 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// スレッドごとの最終閲覧時刻を保存・取得するヘルパー
 function getSeenMap() {
   if (!currentUser) return {};
   try {
@@ -49,7 +47,6 @@ function markThreadAsSeen(threadId, updatedAt) {
   localStorage.setItem(`seen_threads_${currentUser.id}`, JSON.stringify(map));
 }
 
-// 初期起動時のログイン確認
 window.addEventListener('DOMContentLoaded', async () => {
   const res = await fetch('/api/me');
   const data = await res.json();
@@ -75,7 +72,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 });
 
 function showView(viewId) {
-  // 画面切り替え時は一度すべての自動更新タイマーをリセットする
   stopAllPolling();
   if (viewId !== 'thread-view') {
     lastRenderedSnapshot = '';
@@ -94,7 +90,7 @@ function showLoggedInUI() {
 }
 
 // ==========================================
-// 自動更新タイマー制御（ロビー＆スレッド共通）
+// 自動更新タイマー制御
 // ==========================================
 
 function startLobbyPolling() {
@@ -103,7 +99,7 @@ function startLobbyPolling() {
     if (currentUser && !document.hidden && !document.getElementById('lobby-view').classList.contains('hidden')) {
       loadLobby(true);
     }
-  }, 5000); // ロビーは5秒ごとに自動同期
+  }, 5000);
 }
 
 function stopLobbyPolling() {
@@ -119,7 +115,7 @@ function startThreadPolling() {
     if (currentThreadId && !document.hidden && !document.getElementById('thread-view').classList.contains('hidden')) {
       loadThreadDetail(currentThreadId, currentRoomCode, true);
     }
-  }, 4000); // スレッド内は4秒ごとに自動同期
+  }, 4000);
 }
 
 function stopThreadPolling() {
@@ -185,7 +181,7 @@ async function logout() {
 }
 
 // ==========================================
-// 設定画面（通知ON/OFF・パスワード変更・アカウント削除）
+// 設定画面
 // ==========================================
 
 async function openSettings() {
@@ -343,7 +339,7 @@ async function confirmDeleteAccount() {
 }
 
 // ==========================================
-// ロビー（ホーム）画面・自動更新対応
+// ロビー（ホーム）画面
 // ==========================================
 
 function goLobby() {
@@ -367,7 +363,6 @@ async function loadLobby(isAutoPoll = false) {
   const threads = await res.json();
   const seenMap = getSeenMap();
 
-  // スレッド一覧の並び順・更新時刻・コメント数・閲覧モード・既読状態からスナップショットを作成
   const currentLobbySnapshot = JSON.stringify(
     threads.map(t => {
       const updatedTime = new Date(t.updated_at).getTime();
@@ -377,12 +372,12 @@ async function loadLobby(isAutoPoll = false) {
         title: t.title,
         comment_count: t.comment_count,
         is_readonly: t.is_readonly,
-        is_updated: updatedTime > lastSeenTime
+        is_blocked: t.is_blocked,
+        is_updated: !t.is_blocked && (updatedTime > lastSeenTime)
       };
     })
   );
 
-  // 自動更新時に変化がなければDOMを触らない（入力やスクロールを妨げない）
   if (isAutoPoll && currentLobbySnapshot === lastLobbySnapshot) {
     return;
   }
@@ -397,25 +392,36 @@ async function loadLobby(isAutoPoll = false) {
   }
 
   threads.forEach(t => {
+    const isBlocked = !!t.is_blocked;
     const updatedTime = new Date(t.updated_at).getTime();
     const lastSeenTime = seenMap[t.id] || 0;
-    const isUpdated = updatedTime > lastSeenTime;
+    const isUpdated = !isBlocked && (updatedTime > lastSeenTime);
 
     const item = document.createElement('div');
-    item.className = `thread-item ${isUpdated ? 'updated' : ''}`;
+    if (isBlocked) {
+      item.className = 'thread-item blocked';
+    } else if (isUpdated) {
+      item.className = 'thread-item updated';
+    } else {
+      item.className = 'thread-item';
+    }
     
     let badges = '';
-    if (isUpdated) {
-      badges += `<span class="badge badge-updated">NEW</span> `;
-    }
-    if (t.is_private) {
-      badges += `<span class="badge badge-private">🔒 プライベート</span> `;
-      if (t.room_code) {
-        badges += `<span class="badge badge-code">部屋番号: ${t.room_code}</span> `;
+    if (isBlocked) {
+      badges += `<span class="badge badge-blocked">🚫 ブロック済み（閲覧不可）</span> `;
+    } else {
+      if (isUpdated) {
+        badges += `<span class="badge badge-updated">NEW</span> `;
       }
-    }
-    if (t.is_readonly) {
-      badges += `<span class="badge badge-readonly">閲覧モード</span>`;
+      if (t.is_private) {
+        badges += `<span class="badge badge-private">🔒 プライベート</span> `;
+        if (t.room_code) {
+          badges += `<span class="badge badge-code">部屋番号: ${t.room_code}</span> `;
+        }
+      }
+      if (t.is_readonly) {
+        badges += `<span class="badge badge-readonly">閲覧モード</span>`;
+      }
     }
 
     item.innerHTML = `
@@ -429,7 +435,13 @@ async function loadLobby(isAutoPoll = false) {
       </div>
     `;
 
-    item.onclick = () => openThread(t.id, t.is_private, t.creator_id === currentUser.id);
+    item.onclick = () => {
+      if (isBlocked) {
+        alert('スレッド作成者によりブロックされているため、このスレッドは開けません。');
+        return;
+      }
+      openThread(t.id, t.is_private, t.creator_id === currentUser.id);
+    };
     listEl.appendChild(item);
   });
 }
@@ -463,7 +475,7 @@ async function createThread(e) {
 }
 
 // ==========================================
-// スレッド閲覧・自動同期・入室処理
+// スレッド閲覧・自動同期・ブロック管理
 // ==========================================
 
 function openThread(threadId, isPrivate, isCreator, knownCode = null) {
@@ -516,6 +528,12 @@ async function loadThreadDetail(threadId, code = null, isAutoPoll = false) {
   const data = await res.json();
 
   if (!res.ok) {
+    if (data.blocked) {
+      stopThreadPolling();
+      alert('スレッド作成者によりブロックされたため、このスレッドを閲覧できません。');
+      goLobby();
+      return false;
+    }
     if (!isAutoPoll) {
       if (data.requireCode) {
         document.getElementById('modal-error').textContent = data.error;
@@ -527,8 +545,11 @@ async function loadThreadDetail(threadId, code = null, isAutoPoll = false) {
     return false;
   }
 
+  currentBlockedUsers = data.blockedUsers || [];
+
   const currentSnapshot = JSON.stringify({
     readonly: data.thread.is_readonly,
+    blockedUsers: currentBlockedUsers,
     comments: data.comments.map(c => ({
       id: c.id,
       is_deleted: c.is_deleted,
@@ -566,6 +587,7 @@ async function loadThreadDetail(threadId, code = null, isAutoPoll = false) {
 function renderThreadDetail(data) {
   const { thread, comments, currentUserId } = data;
   const isCreator = thread.creator_id === currentUserId;
+  const blockedIdSet = new Set(currentBlockedUsers.map(u => u.id));
 
   document.getElementById('detail-title').textContent = thread.title;
   document.getElementById('detail-author').textContent = `👑${thread.author_name}`;
@@ -583,6 +605,7 @@ function renderThreadDetail(data) {
   const controls = document.getElementById('creator-controls');
   if (isCreator) {
     controls.classList.remove('hidden');
+    document.getElementById('blocked-count').textContent = currentBlockedUsers.length;
     document.getElementById('toggle-readonly-btn').textContent =
       thread.is_readonly ? '書き込みを許可する' : '閲覧モードにする';
   } else {
@@ -599,6 +622,10 @@ function renderThreadDetail(data) {
     const canDelete = isCreator || (c.user_id === currentUserId);
     const isThreadCreatorComment = c.user_id === thread.creator_id;
     const displayAuthor = isThreadCreatorComment ? `👑${c.author_name}` : c.author_name;
+    const isUserBlocked = blockedIdSet.has(c.user_id);
+
+    // スレ主のみ、自分以外のユーザーに対してブロックボタンを表示
+    const canBlock = isCreator && (c.user_id !== currentUserId);
 
     const dateStr = new Date(c.created_at).toLocaleString('ja-JP', {
       month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
@@ -607,6 +634,12 @@ function renderThreadDetail(data) {
     const card = document.createElement('div');
     card.className = 'comment-card';
 
+    const blockButtonHtml = canBlock
+      ? (isUserBlocked
+          ? `<span style="font-size:0.78rem; color:var(--text-muted);">🚫ブロック中</span>`
+          : `<button class="block-user-btn" onclick="blockUser(${c.user_id}, '${escapeJsString(c.author_name)}')">🚫 ブロック</button>`)
+      : '';
+
     if (c.is_deleted) {
       card.innerHTML = `
         <div class="comment-header">
@@ -614,6 +647,7 @@ function renderThreadDetail(data) {
           <span>${dateStr}</span>
         </div>
         <div class="deleted-message">メッセージが削除されました</div>
+        ${blockButtonHtml ? `<div class="comment-footer"><span></span><div class="comment-actions-right">${blockButtonHtml}</div></div>` : ''}
       `;
     } else {
       card.innerHTML = `
@@ -627,13 +661,67 @@ function renderThreadDetail(data) {
           <button class="like-btn ${c.is_liked ? 'liked' : ''}" onclick="toggleLike(${c.id})">
             💕 <span>${c.like_count}</span>
           </button>
-          ${canDelete ? `<button class="delete-comment-btn" onclick="deleteComment(${c.id})">削除</button>` : ''}
+          <div class="comment-actions-right">
+            ${blockButtonHtml}
+            ${canDelete ? `<button class="delete-comment-btn" onclick="deleteComment(${c.id})">削除</button>` : ''}
+          </div>
         </div>
       `;
     }
 
     listEl.appendChild(card);
   });
+}
+
+async function blockUser(targetUserId, targetUsername) {
+  if (!confirm(`「${targetUsername}」さんをこのスレッドからブロックしますか？\nブロックされたユーザーはこのスレッドを開けなくなります。`)) {
+    return;
+  }
+  const res = await fetch(`/api/threads/${currentThreadId}/block`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetUserId })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.error);
+    return;
+  }
+  alert(`「${targetUsername}」さんをブロックしました。`);
+  refreshCurrentThread();
+}
+
+function openBlockedUsersModal() {
+  const listEl = document.getElementById('blocked-users-list');
+  listEl.innerHTML = '';
+
+  if (currentBlockedUsers.length === 0) {
+    listEl.innerHTML = '<p style="font-size:0.88rem; color:var(--text-muted); margin:8px 0;">現在ブロックしているユーザーはいません。</p>';
+  } else {
+    currentBlockedUsers.forEach(u => {
+      const row = document.createElement('div');
+      row.className = 'blocked-user-row';
+      row.innerHTML = `
+        <span>${escapeHtml(u.username)}</span>
+        <button class="btn btn-outline btn-sm" onclick="unblockUser(${u.id}, '${escapeJsString(u.username)}')">解除</button>
+      `;
+      listEl.appendChild(row);
+    });
+  }
+  document.getElementById('blocked-users-modal').classList.remove('hidden');
+}
+
+function closeBlockedUsersModal() {
+  document.getElementById('blocked-users-modal').classList.add('hidden');
+}
+
+async function unblockUser(targetUserId, targetUsername) {
+  if (!confirm(`「${targetUsername}」さんのブロックを解除しますか？`)) return;
+  const res = await fetch(`/api/threads/${currentThreadId}/block/${targetUserId}`, { method: 'DELETE' });
+  if (res.ok) {
+    closeBlockedUsersModal();
+    refreshCurrentThread();
+  }
 }
 
 // ==========================================
@@ -734,4 +822,9 @@ function escapeHtml(str) {
   return str.replace(/[&<>"']/g, m => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[m]));
+}
+
+function escapeJsString(str) {
+  if (!str) return '';
+  return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
 }
