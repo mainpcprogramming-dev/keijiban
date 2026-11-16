@@ -85,7 +85,9 @@ function showView(viewId) {
 
 function showLoggedInUI() {
   document.getElementById('header-user-area').classList.remove('hidden');
-  document.getElementById('current-username').textContent = currentUser.username;
+  const usernameEl = document.getElementById('current-username');
+  usernameEl.textContent = currentUser.username;
+  usernameEl.title = currentUser.username;
   document.getElementById('thread-author').value = currentUser.username;
 }
 
@@ -507,6 +509,10 @@ async function refreshCurrentThread() {
   if (!currentThreadId) return;
   lastRenderedSnapshot = '';
   await loadThreadDetail(currentThreadId, currentRoomCode, false);
+}
+
+function scrollToBottom() {
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 }
 
 async function loadThreadDetail(threadId, code = null, isAutoPoll = false) {

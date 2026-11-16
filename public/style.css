@@ -59,13 +59,17 @@ body {
   color: var(--primary);
   cursor: pointer;
   letter-spacing: 0.04em;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .user-area {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .username-badge {
@@ -74,6 +78,10 @@ body {
   background: var(--bg-main);
   padding: 4px 12px;
   border-radius: 20px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* レイアウト */
@@ -101,6 +109,7 @@ body {
   cursor: pointer;
   transition: background-color 0.2s, opacity 0.2s;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .btn-sm {
@@ -398,7 +407,8 @@ input:focus, textarea:focus {
 
 .nav-left-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .creator-controls {
@@ -758,4 +768,40 @@ input:checked + .slider:before {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* スマホ表示時のヘッダー折り返し・ボタン被り防止 */
+@media (max-width: 600px) {
+  .app-header {
+    padding: 10px 12px;
+  }
+
+  .logo {
+    font-size: 1.1rem;
+  }
+
+  .user-area {
+    gap: 5px;
+  }
+
+  .username-badge {
+    max-width: 84px;
+    padding: 4px 8px;
+    font-size: 0.78rem;
+  }
+
+  .user-area .btn-sm {
+    padding: 5px 8px;
+    font-size: 0.78rem;
+  }
+
+  .sticky-thread-nav {
+    top: 49px;
+    padding: 8px 0;
+  }
+
+  .nav-left-actions .btn-sm {
+    padding: 5px 8px;
+    font-size: 0.78rem;
+  }
 }

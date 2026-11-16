@@ -76,6 +76,8 @@
             </div>
             <div class="update-info-scroll">
               <ul class="update-info-list">
+                <li><strong>2026/11/17</strong> 一番下へボタンを追加しました。一番下まで自動でスクロールしてくれます。</li>
+                <li><strong>2026/11/17</strong> 利用中のDBを「Neon」から「Aiven」に変更しました。データ転送容量毎月100GBに変更されました。</li>
                 <li><strong>2026/11/13</strong> スレッド製作者専用の「ユーザーブロック機能」を追加しました。ブロックされたユーザーはそのスレッドを閲覧できなくなり、一覧の一番下にグレー表示されます。</li>
                 <li><strong>2026/11/13</strong> 通知の際にメッセージ表示を削除し「〇〇が新しいメッセージを投稿されました」に変更、メッセージ削除時はプッシュ通知が送られないようになりました。</li>
                 <li><strong>2026/11/13</strong> ホーム（ロビー）画面とスレッド詳細画面に自動更新機能を追加しました。更新ボタンを押さなくても、新規スレッド・新着コメント・いいね・削除が自動でリアルタイム反映されます。</li>
@@ -86,18 +88,6 @@
               </ul>
             </div>
           </div>
-          <!-- ここから -->
-          <div class="card update-info-card">
-            <div class="update-info-header">
-              <span style="color: red;">📢 緊急情報</span>
-            </div>
-            <div class="update-info-scroll">
-              <ul class="update-info-list">
-                <li style="font-weight: bolder;"><strong>2026/11/16</strong> このサイトで利用しているデータベース<p style="color: red; display: inline; font-weight: bolder;">「Neon」のネットワーク転送容量の無料枠が超えてしまいそうです</p>。現在5GB中<p style="color: red; display: inline;font-weight: bolder;">4.51GB使用中</p>となっておりいつ無料枠が切れるか分からない状況です。サーバーがダウンしたら「無料枠が切れたんだな」と思っていただけると幸いです。<p style="color: rgb(255, 0, 0); display: inline;font-weight: bolder;">スケッチパーティのみDBを使用していないため引き続き利用可能です</p>。今後ともよろしくお願いします。</li>
-              </ul>
-            </div>
-          </div>
-          <!-- ここまで消す -->
 
           <div class="section-header">
             <h2>スレッド一覧</h2>
@@ -114,6 +104,7 @@
         <div class="nav-left-actions">
           <button onclick="goLobby()" class="btn btn-outline btn-sm">🏠 ホームに戻る</button>
           <button onclick="refreshCurrentThread()" class="btn btn-outline btn-sm">🔄 更新</button>
+          <button onclick="scrollToBottom()" class="btn btn-outline btn-sm">⬇️ 一番下へ</button>
         </div>
         <div id="creator-controls" class="creator-controls hidden">
           <button id="manage-blocks-btn" onclick="openBlockedUsersModal()" class="btn btn-outline btn-sm">🚫 ブロック管理 (<span id="blocked-count">0</span>)</button>
