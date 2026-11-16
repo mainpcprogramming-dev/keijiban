@@ -81,6 +81,7 @@ function showView(viewId) {
   }
   document.querySelectorAll('.view').forEach(el => el.classList.add('hidden'));
   document.getElementById(viewId).classList.remove('hidden');
+  window.scrollTo(0, 0);
 }
 
 function showLoggedInUI() {
