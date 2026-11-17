@@ -634,7 +634,8 @@ function renderThreadDetail(data) {
     // スレ主のみ、自分以外のユーザーに対してブロックボタンを表示
     const canBlock = isCreator && (c.user_id !== currentUserId);
 
-    const dateStr = new Date(c.created_at).toLocaleString('ja-JP', {
+    const rawTime = String(c.created_at).replace(' ', 'T').replace(/(Z|[+-]\d{2}:?\d{2})$/, '');
+    const dateStr = new Date(rawTime).toLocaleString('ja-JP', {
       month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
     });
 

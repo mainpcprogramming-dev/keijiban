@@ -12,7 +12,9 @@ const PORT = process.env.PORT || 3000;
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+  ssl: { rejectUnauthorized: false },
+  max: 5,
+  options: '-c timezone=Asia/Tokyo'
 });
 
 app.use(express.json({ limit: '10mb' }));
