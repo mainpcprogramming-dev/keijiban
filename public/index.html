@@ -76,6 +76,7 @@
             </div>
             <div class="update-info-scroll">
               <ul class="update-info-list">
+                <li><strong>2026/11/18</strong> スレッド内の画像をタップすると全画面で大きく表示され、ズーム（拡大・縮小）できる機能を追加しました。右上の「✕」ボタンで閉じることができます。</li>
                 <li><strong>2026/11/17</strong> 利用中のDBを「Neon」から「Aiven」に変更しました。データ転送容量毎月100GBに変更されました。</li>
                 <li><strong>2026/11/17</strong> スレッド内に一番下へボタンを追加しました。一番下まで自動でスクロールしてくれます。</li>
                 <li><strong>2026/11/17</strong> ホーム画面や各スレッドを開いた際に、必ずページの一番上から表示されるように改善しました。また、スマホ表示時にユーザー名が長くてもヘッダーのボタンが隠れないようレイアウトを調整しました。</li>
@@ -253,6 +254,14 @@
         <button onclick="closeDeleteAccountModal()" class="btn btn-outline">いいえ</button>
         <button onclick="confirmDeleteAccount()" class="btn btn-danger">はい</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 画像拡大表示モーダル（ライトボックス） -->
+  <div id="image-lightbox-modal" class="image-lightbox hidden" onclick="closeImageLightbox(event)">
+    <button type="button" class="lightbox-close-btn" onclick="closeImageLightbox(event)" aria-label="閉じる">✕</button>
+    <div class="lightbox-scroll-container" onclick="closeImageLightbox(event)">
+      <img id="lightbox-image" src="" alt="拡大画像" onclick="toggleImageZoom(event)">
     </div>
   </div>
 

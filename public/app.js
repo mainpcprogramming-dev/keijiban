@@ -664,7 +664,7 @@ function renderThreadDetail(data) {
           <span>${dateStr}</span>
         </div>
         ${c.content ? `<div class="comment-body">${escapeHtml(c.content)}</div>` : ''}
-        ${c.image_data ? `<img src="${c.image_data}" class="comment-image" alt="添付画像">` : ''}
+        ${c.image_data ? `<img src="${c.image_data}" class="comment-image" alt="添付画像" onclick="openImageLightbox(this.src)">` : ''}
         <div class="comment-footer">
           <button class="like-btn ${c.is_liked ? 'liked' : ''}" onclick="toggleLike(${c.id})">
             💕 <span>${c.like_count}</span>
@@ -835,4 +835,34 @@ function escapeHtml(str) {
 function escapeJsString(str) {
   if (!str) return '';
   return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+// ==========================================
+// 画像拡大表示（ライトボックス＆ズーム）
+// ==========================================
+
+function openImageLightbox(src) {
+  const modal = document.getElementById('image-lightbox-modal');
+  const container = modal.querySelector('.lightbox-scroll-container');
+  const img = document.getElementById('lightbox-image');
+
+  container.classList.remove('zoomed');
+  img.src = src;
+  modal.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+
+function toggleImageZoom(e) {
+  e.stopPropagation();
+  const container = e.target.closest('.lightbox-scroll-container');
+  container.classList.toggle('zoomed');
+}
+
+function closeImageLightbox(e) {
+  if (e && e.target.id === 'lightbox-image') return;
+  const modal = document.getElementById('image-lightbox-modal');
+  const img = document.getElementById('lightbox-image');
+  modal.classList.add('hidden');
+  img.src = '';
+  document.body.style.overflow = '';
 }
