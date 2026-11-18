@@ -838,7 +838,7 @@ function escapeJsString(str) {
 }
 
 // ==========================================
-// 画像拡大表示（画像専用ピンチズーム・ドラッグ・PCクリック拡大対応）
+// 画像拡大表示（画像専用ピンチズーム同時移動・PCクリック拡大対応）
 // ==========================================
 
 let lbScale = 1;
@@ -850,6 +850,10 @@ let lbStartX = 0;
 let lbStartY = 0;
 let lbInitialPinchDist = 0;
 let lbInitialScale = 1;
+let lbInitialPinchCenterX = 0;
+let lbInitialPinchCenterY = 0;
+let lbInitialTranslateX = 0;
+let lbInitialTranslateY = 0;
 let lbLastTapTime = 0;
 
 function updateLightboxTransform() {
@@ -867,7 +871,6 @@ function updateLightboxTransform() {
 }
 
 function buildCustomLightbox() {
-  // 古いモーダルHTMLが残っていれば一度削除してクリーンにする
   const oldModal = document.getElementById('image-lightbox-modal');
   if (oldModal) oldModal.remove();
 
@@ -885,7 +888,7 @@ function buildCustomLightbox() {
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
-    touchAction: 'none', // サイト全体のズーム・スクロールを完全に防止
+    touchAction: 'none',
     userSelect: 'none',
     webkitUserSelect: 'none'
   });
@@ -936,14 +939,13 @@ function buildCustomLightbox() {
     touchAction: 'none'
   });
 
-  // 背景（黒い余白）クリックで閉じる
   modal.addEventListener('click', (e) => {
     if (e.target === modal) {
       closeImageLightbox();
     }
   });
 
-  // PCマウス操作：クリックでズーム切替、拡大中はドラッグ移動
+  // PCマウス操作
   img.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -975,7 +977,6 @@ function buildCustomLightbox() {
     lbIsDragging = false;
     img.style.transition = 'transform 0.15s ease-out';
     if (!lbHasMoved && e.target === img) {
-      // ドラッグせずクリックした場合は2倍ズーム ↔ 等倍を切り替え
       if (lbScale === 1) {
         lbScale = 2;
       } else {
@@ -987,7 +988,6 @@ function buildCustomLightbox() {
     updateLightboxTransform();
   });
 
-  // PCホイールでの拡大縮小にも対応
   modal.addEventListener('wheel', (e) => {
     e.preventDefault();
     img.style.transition = 'transform 0.08s ease-out';
@@ -996,20 +996,24 @@ function buildCustomLightbox() {
     updateLightboxTransform();
   }, { passive: false });
 
-  // スマホタッチ操作：2本指ピンチズーム＆1本指パン移動＆ダブルタップズーム
-  img.addEventListener('touchstart', (e) => {
+  // スマホタッチ操作：ピンチズームしながら同時に移動（焦点追従＋2本指パン）
+  const handleTouchStart = (e) => {
     e.stopPropagation();
     img.style.transition = 'none';
+
     if (e.touches.length === 2) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      lbInitialPinchDist = Math.hypot(dx, dy);
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      lbInitialPinchDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
       lbInitialScale = lbScale;
+      lbInitialPinchCenterX = (t0.clientX + t1.clientX) / 2;
+      lbInitialPinchCenterY = (t0.clientY + t1.clientY) / 2;
+      lbInitialTranslateX = lbTranslateX;
+      lbInitialTranslateY = lbTranslateY;
     } else if (e.touches.length === 1) {
       lbStartX = e.touches[0].clientX - lbTranslateX;
       lbStartY = e.touches[0].clientY - lbTranslateY;
 
-      // ダブルタップで2倍ズーム／リセット
       const now = Date.now();
       if (now - lbLastTapTime < 280) {
         img.style.transition = 'transform 0.18s ease-out';
@@ -1024,34 +1028,67 @@ function buildCustomLightbox() {
       }
       lbLastTapTime = now;
     }
-  }, { passive: true });
+  };
 
-  img.addEventListener('touchmove', (e) => {
+  const handleTouchMove = (e) => {
     e.preventDefault();
     e.stopPropagation();
+
     if (e.touches.length === 2 && lbInitialPinchDist > 0) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.hypot(dx, dy);
-      lbScale = Math.min(4, Math.max(1, lbInitialScale * (dist / lbInitialPinchDist)));
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      const dist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+      const newScale = Math.min(4.5, Math.max(1, lbInitialScale * (dist / lbInitialPinchDist)));
+
+      // 現在の2本指の重心座標
+      const currentCenterX = (t0.clientX + t1.clientX) / 2;
+      const currentCenterY = (t0.clientY + t1.clientY) / 2;
+
+      // 画面中央からのオフセット
+      const screenCenterX = window.innerWidth / 2;
+      const screenCenterY = window.innerHeight / 2;
+      const focalX = lbInitialPinchCenterX - screenCenterX;
+      const focalY = lbInitialPinchCenterY - screenCenterY;
+
+      // 拡大倍率の変化に伴う焦点のズレ補正 ＋ 2本指自体の移動量を加算
+      const scaleRatio = newScale / lbInitialScale;
+      const panDx = currentCenterX - lbInitialPinchCenterX;
+      const panDy = currentCenterY - lbInitialPinchCenterY;
+
+      lbScale = newScale;
+      lbTranslateX = focalX - (focalX - lbInitialTranslateX) * scaleRatio + panDx;
+      lbTranslateY = focalY - (focalY - lbInitialTranslateY) * scaleRatio + panDy;
+
       updateLightboxTransform();
     } else if (e.touches.length === 1 && lbScale > 1) {
       lbTranslateX = e.touches[0].clientX - lbStartX;
       lbTranslateY = e.touches[0].clientY - lbStartY;
       updateLightboxTransform();
     }
-  }, { passive: false });
+  };
 
-  img.addEventListener('touchend', () => {
-    lbInitialPinchDist = 0;
-    img.style.transition = 'transform 0.15s ease-out';
-    if (lbScale < 1.05) {
-      lbScale = 1;
-      lbTranslateX = 0;
-      lbTranslateY = 0;
-      updateLightboxTransform();
+  const handleTouchEnd = (e) => {
+    if (e.touches.length === 1) {
+      // 2本指から1本指になった瞬間に、残った1本指の現在位置を基準に再セット（ワープ防止）
+      lbInitialPinchDist = 0;
+      lbStartX = e.touches[0].clientX - lbTranslateX;
+      lbStartY = e.touches[0].clientY - lbTranslateY;
+    } else if (e.touches.length === 0) {
+      lbInitialPinchDist = 0;
+      img.style.transition = 'transform 0.15s ease-out';
+      if (lbScale < 1.05) {
+        lbScale = 1;
+        lbTranslateX = 0;
+        lbTranslateY = 0;
+        updateLightboxTransform();
+      }
     }
-  });
+  };
+
+  // ズームして画像が画面いっぱいに広がった状態でも操作できるよう modal 全体でタッチを受け取る
+  modal.addEventListener('touchstart', handleTouchStart, { passive: true });
+  modal.addEventListener('touchmove', handleTouchMove, { passive: false });
+  modal.addEventListener('touchend', handleTouchEnd, { passive: true });
 
   modal.appendChild(closeBtn);
   modal.appendChild(img);
