@@ -814,6 +814,15 @@ input:checked + .slider:before {
   opacity: 0.92;
 }
 
+/* コメント画像のタップ可能カーソル */
+.comment-image {
+  cursor: zoom-in;
+  transition: opacity 0.15s;
+}
+.comment-image:hover {
+  opacity: 0.92;
+}
+
 /* 画像拡大モーダル（ライトボックス） */
 .image-lightbox {
   position: fixed;
@@ -829,13 +838,13 @@ input:checked + .slider:before {
   position: fixed;
   top: max(16px, env(safe-area-inset-top, 16px));
   right: 16px;
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  background-color: rgba(30, 30, 30, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background-color: rgba(30, 30, 30, 0.85);
   color: #ffffff;
-  font-size: 1.25rem;
+  font-size: 1.3rem;
   font-weight: 700;
   line-height: 1;
   display: flex;
@@ -846,7 +855,7 @@ input:checked + .slider:before {
 }
 
 .lightbox-close-btn:hover {
-  background-color: rgba(80, 80, 80, 0.9);
+  background-color: rgba(90, 90, 90, 0.95);
 }
 
 .lightbox-scroll-container {
@@ -856,30 +865,37 @@ input:checked + .slider:before {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 12px;
+  padding: 16px;
   touch-action: pan-x pan-y pinch-zoom;
 }
 
 .lightbox-scroll-container img {
-  max-width: 100%;
-  max-height: 100%;
+  max-width: 92vw;
+  max-height: 88vh;
+  width: auto;
+  height: auto;
   object-fit: contain;
-  border-radius: 4px;
-  cursor: zoom-in;
-  transition: transform 0.2s ease;
+  border-radius: 6px;
   touch-action: pan-x pan-y pinch-zoom;
 }
 
-/* ダブルタップ・クリックでの2倍拡大状態 */
-.lightbox-scroll-container.zoomed {
-  display: block;
-  padding: 40px 12px;
-}
+/* PC専用のクリック2倍拡大（スマホでは発動しない） */
+@media (hover: hover) and (pointer: fine) {
+  .lightbox-scroll-container img {
+    cursor: zoom-in;
+  }
 
-.lightbox-scroll-container.zoomed img {
-  max-width: none;
-  max-height: none;
-  width: 180%;
-  cursor: zoom-out;
+  .lightbox-scroll-container.pc-zoomed {
+    display: block;
+    text-align: center;
+    padding: 40px 16px;
+  }
+
+  .lightbox-scroll-container.pc-zoomed img {
+    max-width: none;
+    max-height: none;
+    width: 150%;
+    cursor: zoom-out;
+  }
 }
 }

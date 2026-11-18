@@ -408,7 +408,7 @@ async function loadLobby(isAutoPoll = false) {
     } else {
       item.className = 'thread-item';
     }
-    
+
     let badges = '';
     if (isBlocked) {
       badges += `<span class="badge badge-blocked">🚫 ブロック済み（閲覧不可）</span> `;
@@ -644,8 +644,8 @@ function renderThreadDetail(data) {
 
     const blockButtonHtml = canBlock
       ? (isUserBlocked
-          ? `<span style="font-size:0.78rem; color:var(--text-muted);">🚫ブロック中</span>`
-          : `<button class="block-user-btn" onclick="blockUser(${c.user_id}, '${escapeJsString(c.author_name)}')">🚫 ブロック</button>`)
+        ? `<span style="font-size:0.78rem; color:var(--text-muted);">🚫ブロック中</span>`
+        : `<button class="block-user-btn" onclick="blockUser(${c.user_id}, '${escapeJsString(c.author_name)}')">🚫 ブロック</button>`)
       : '';
 
     if (c.is_deleted) {
@@ -741,9 +741,9 @@ function previewImage(e) {
   if (!file) return;
 
   const reader = new FileReader();
-  reader.onload = function(event) {
+  reader.onload = function (event) {
     const img = new Image();
-    img.onload = function() {
+    img.onload = function () {
       const canvas = document.createElement('canvas');
       const MAX_WIDTH = 800;
       let width = img.width;
@@ -843,26 +843,43 @@ function escapeJsString(str) {
 
 function openImageLightbox(src) {
   const modal = document.getElementById('image-lightbox-modal');
-  const container = modal.querySelector('.lightbox-scroll-container');
   const img = document.getElementById('lightbox-image');
+  if (!modal || !img || !src) return;
 
-  container.classList.remove('zoomed');
+  const container = modal.querySelector('.lightbox-scroll-container');
+  if (container) container.classList.remove('pc-zoomed');
+
   img.src = src;
   modal.classList.remove('hidden');
   document.body.style.overflow = 'hidden';
 }
 
-function toggleImageZoom(e) {
+function handleLightboxImageClick(e) {
   e.stopPropagation();
+  // スマホ（タッチ端末）ではタップでの強制ズームを無効化し、ピンチズームのみにする
+  if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+    return;
+  }
   const container = e.target.closest('.lightbox-scroll-container');
-  container.classList.toggle('zoomed');
+  if (container) {
+    container.classList.toggle('pc-zoomed');
+  }
 }
 
 function closeImageLightbox(e) {
-  if (e && e.target.id === 'lightbox-image') return;
+  if (e && e.target && e.target.id === 'lightbox-image') return;
   const modal = document.getElementById('image-lightbox-modal');
   const img = document.getElementById('lightbox-image');
-  modal.classList.add('hidden');
-  img.src = '';
+  if (modal) modal.classList.add('hidden');
+  if (img) img.src = '';
   document.body.style.overflow = '';
 }
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const modal = document.getElementById('image-lightbox-modal');
+    if (modal && !modal.classList.contains('hidden')) {
+      closeImageLightbox();
+    }
+  }
+});
