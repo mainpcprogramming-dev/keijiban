@@ -838,31 +838,164 @@ function escapeJsString(str) {
 }
 
 // ==========================================
-// 画像拡大表示（ライトボックス＆ズーム）
+// 画像拡大表示（ライトボックス＆ズーム・PC/スマホ完全対応）
 // ==========================================
 
-function openImageLightbox(src) {
-  const modal = document.getElementById('image-lightbox-modal');
-  const img = document.getElementById('lightbox-image');
-  if (!modal || !img || !src) return;
+function ensureLightboxElements() {
+  let modal = document.getElementById('image-lightbox-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'image-lightbox-modal';
+    modal.innerHTML = `
+      <button type="button" id="lightbox-close-btn" aria-label="閉じる">✕</button>
+      <div id="lightbox-scroll-container">
+        <img id="lightbox-image" src="" alt="拡大画像">
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
 
-  const container = modal.querySelector('.lightbox-scroll-container');
-  if (container) container.classList.remove('pc-zoomed');
+  // CSSキャッシュに左右されないようインラインスタイルを強制適用
+  Object.assign(modal.style, {
+    position: 'fixed',
+    top: '0',
+    left: '0',
+    width: '100vw',
+    height: '100vh',
+    backgroundColor: 'rgba(0, 0, 0, 0.92)',
+    zIndex: '99999',
+    display: 'none',
+    justifyContent: 'center',
+    alignItems: 'center'
+  });
+
+  const closeBtn = document.getElementById('lightbox-close-btn') || modal.querySelector('.lightbox-close-btn');
+  if (closeBtn) {
+    Object.assign(closeBtn.style, {
+      position: 'fixed',
+      top: '18px',
+      right: '18px',
+      width: '44px',
+      height: '44px',
+      borderRadius: '50%',
+      border: '1px solid rgba(255, 255, 255, 0.45)',
+      backgroundColor: 'rgba(30, 30, 30, 0.85)',
+      color: '#ffffff',
+      fontSize: '20px',
+      fontWeight: 'bold',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      cursor: 'pointer',
+      zIndex: '100001'
+    });
+    closeBtn.onclick = (e) => {
+      e.stopPropagation();
+      closeImageLightbox();
+    };
+  }
+
+  const container = document.getElementById('lightbox-scroll-container') || modal.querySelector('.lightbox-scroll-container');
+  if (container) {
+    Object.assign(container.style, {
+      width: '100%',
+      height: '100%',
+      overflow: 'auto',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: '20px',
+      boxSizing: 'border-box',
+      touchAction: 'pan-x pan-y pinch-zoom'
+    });
+    container.onclick = (e) => {
+      if (e.target === container) closeImageLightbox();
+    };
+  }
+
+  const img = document.getElementById('lightbox-image');
+  if (img) {
+    Object.assign(img.style, {
+      maxWidth: '90vw',
+      maxHeight: '88vh',
+      width: 'auto',
+      height: 'auto',
+      objectFit: 'contain',
+      borderRadius: '6px',
+      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+      touchAction: 'pan-x pan-y pinch-zoom'
+    });
+    img.onclick = (e) => handleLightboxImageClick(e);
+  }
+
+  modal.onclick = (e) => {
+    if (e.target === modal) closeImageLightbox();
+  };
+
+  return { modal, container, img };
+}
+
+let isPcImageZoomed = false;
+
+function openImageLightbox(src) {
+  if (!src) return;
+  const { modal, container, img } = ensureLightboxElements();
+  isPcImageZoomed = false;
 
   img.src = src;
+  Object.assign(img.style, {
+    maxWidth: '90vw',
+    maxHeight: '88vh',
+    width: 'auto',
+    height: 'auto',
+    cursor: window.matchMedia('(hover: hover) and (pointer: fine)').matches ? 'zoom-in' : 'default'
+  });
+  Object.assign(container.style, {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center'
+  });
+
   modal.classList.remove('hidden');
+  modal.style.display = 'flex';
   document.body.style.overflow = 'hidden';
 }
 
 function handleLightboxImageClick(e) {
   e.stopPropagation();
-  // スマホ（タッチ端末）ではタップでの強制ズームを無効化し、ピンチズームのみにする
+  // スマホ（タッチ端末）ではタップでのズーム切り替えを無効化
   if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
     return;
   }
-  const container = e.target.closest('.lightbox-scroll-container');
-  if (container) {
-    container.classList.toggle('pc-zoomed');
+
+  const { container, img } = ensureLightboxElements();
+  isPcImageZoomed = !isPcImageZoomed;
+
+  if (isPcImageZoomed) {
+    Object.assign(container.style, {
+      display: 'block',
+      textAlign: 'center'
+    });
+    Object.assign(img.style, {
+      maxWidth: 'none',
+      maxHeight: 'none',
+      width: '140%',
+      height: 'auto',
+      cursor: 'zoom-out'
+    });
+  } else {
+    Object.assign(container.style, {
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center'
+    });
+    Object.assign(img.style, {
+      maxWidth: '90vw',
+      maxHeight: '88vh',
+      width: 'auto',
+      height: 'auto',
+      cursor: 'zoom-in'
+    });
   }
 }
 
@@ -870,15 +1003,19 @@ function closeImageLightbox(e) {
   if (e && e.target && e.target.id === 'lightbox-image') return;
   const modal = document.getElementById('image-lightbox-modal');
   const img = document.getElementById('lightbox-image');
-  if (modal) modal.classList.add('hidden');
+  if (modal) {
+    modal.classList.add('hidden');
+    modal.style.display = 'none';
+  }
   if (img) img.src = '';
+  isPcImageZoomed = false;
   document.body.style.overflow = '';
 }
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     const modal = document.getElementById('image-lightbox-modal');
-    if (modal && !modal.classList.contains('hidden')) {
+    if (modal && modal.style.display !== 'none') {
       closeImageLightbox();
     }
   }
