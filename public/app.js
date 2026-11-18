@@ -841,6 +841,14 @@ function escapeJsString(str) {
 // 画像拡大表示（ライトボックス＆ズーム・PC/スマホ完全対応）
 // ==========================================
 
+let isPcImageZoomed = false;
+let lastTouchTime = 0;
+
+// スマホのタップ直後かどうかを記録（スマホでの誤ズーム防止）
+document.addEventListener('touchstart', () => {
+  lastTouchTime = Date.now();
+}, { passive: true });
+
 function ensureLightboxElements() {
   let modal = document.getElementById('image-lightbox-modal');
   if (!modal) {
@@ -855,7 +863,9 @@ function ensureLightboxElements() {
     document.body.appendChild(modal);
   }
 
-  // CSSキャッシュに左右されないようインラインスタイルを強制適用
+  // index.htmlに古い属性が残っている場合に備えてインラインonclickをリセット
+  modal.removeAttribute('onclick');
+
   Object.assign(modal.style, {
     position: 'fixed',
     top: '0',
@@ -871,6 +881,7 @@ function ensureLightboxElements() {
 
   const closeBtn = document.getElementById('lightbox-close-btn') || modal.querySelector('.lightbox-close-btn');
   if (closeBtn) {
+    closeBtn.removeAttribute('onclick');
     Object.assign(closeBtn.style, {
       position: 'fixed',
       top: '18px',
@@ -890,6 +901,7 @@ function ensureLightboxElements() {
       zIndex: '100001'
     });
     closeBtn.onclick = (e) => {
+      e.preventDefault();
       e.stopPropagation();
       closeImageLightbox();
     };
@@ -897,6 +909,7 @@ function ensureLightboxElements() {
 
   const container = document.getElementById('lightbox-scroll-container') || modal.querySelector('.lightbox-scroll-container');
   if (container) {
+    container.removeAttribute('onclick');
     Object.assign(container.style, {
       width: '100%',
       height: '100%',
@@ -909,12 +922,16 @@ function ensureLightboxElements() {
       touchAction: 'pan-x pan-y pinch-zoom'
     });
     container.onclick = (e) => {
-      if (e.target === container) closeImageLightbox();
+      // 画像以外の黒い余白をクリックしたときだけ閉じる
+      if (e.target === container) {
+        closeImageLightbox();
+      }
     };
   }
 
   const img = document.getElementById('lightbox-image');
   if (img) {
+    img.removeAttribute('onclick');
     Object.assign(img.style, {
       maxWidth: '90vw',
       maxHeight: '88vh',
@@ -929,13 +946,13 @@ function ensureLightboxElements() {
   }
 
   modal.onclick = (e) => {
-    if (e.target === modal) closeImageLightbox();
+    if (e.target === modal) {
+      closeImageLightbox();
+    }
   };
 
   return { modal, container, img };
 }
-
-let isPcImageZoomed = false;
 
 function openImageLightbox(src) {
   if (!src) return;
@@ -948,7 +965,7 @@ function openImageLightbox(src) {
     maxHeight: '88vh',
     width: 'auto',
     height: 'auto',
-    cursor: window.matchMedia('(hover: hover) and (pointer: fine)').matches ? 'zoom-in' : 'default'
+    cursor: 'zoom-in'
   });
   Object.assign(container.style, {
     display: 'flex',
@@ -962,9 +979,11 @@ function openImageLightbox(src) {
 }
 
 function handleLightboxImageClick(e) {
+  e.preventDefault();
   e.stopPropagation();
-  // スマホ（タッチ端末）ではタップでのズーム切り替えを無効化
-  if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+
+  // 直前（500ms以内）に指でタッチしていた場合はスマホ操作とみなし、強制ズームしない
+  if (Date.now() - lastTouchTime < 500) {
     return;
   }
 
@@ -979,7 +998,7 @@ function handleLightboxImageClick(e) {
     Object.assign(img.style, {
       maxWidth: 'none',
       maxHeight: 'none',
-      width: '140%',
+      width: '150%',
       height: 'auto',
       cursor: 'zoom-out'
     });
