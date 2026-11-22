@@ -1127,3 +1127,66 @@ document.addEventListener('keydown', (e) => {
     closeImageLightbox();
   }
 });
+// ==========================================
+// いいね押下時の画面跳ね防止（操作ロックなし版）
+// ==========================================
+(function() {
+  const origFetch = window.fetch;
+
+  window.fetch = async function(input, options) {
+    const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+
+    if (url.includes('/like') && options && options.method && options.method.toUpperCase() === 'POST') {
+      const scrollY = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight;
+      let userInteracted = false;
+
+      // ユーザーがホイール・タッチ・キー操作をしたら即座に復元処理をキャンセルする
+      const cancelRestore = () => {
+        userInteracted = true;
+        document.body.style.minHeight = '';
+        cleanup();
+      };
+
+      const cleanup = () => {
+        window.removeEventListener('wheel', cancelRestore);
+        window.removeEventListener('touchstart', cancelRestore);
+        window.removeEventListener('keydown', cancelRestore);
+      };
+
+      window.addEventListener('wheel', cancelRestore, { passive: true, once: true });
+      window.addEventListener('touchstart', cancelRestore, { passive: true, once: true });
+      window.addEventListener('keydown', cancelRestore, { passive: true, once: true });
+
+      // 再描画中にページ高さが縮んで上へ押し上げられるのを防ぐ
+      document.body.style.minHeight = docHeight + 'px';
+
+      // DOMの書き換え（再描画）を検知して、勝手なスクロールリセットだけを1回戻す
+      const observer = new MutationObserver(() => {
+        if (!userInteracted && window.scrollY !== scrollY) {
+          window.scrollTo(0, scrollY);
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+
+      try {
+        const res = await origFetch.apply(this, arguments);
+
+        setTimeout(() => {
+          observer.disconnect();
+          document.body.style.minHeight = '';
+          cleanup();
+        }, 400);
+
+        return res;
+      } catch (err) {
+        observer.disconnect();
+        document.body.style.minHeight = '';
+        cleanup();
+        throw err;
+      }
+    }
+
+    return origFetch.apply(this, arguments);
+  };
+})();
