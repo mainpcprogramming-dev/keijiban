@@ -1128,7 +1128,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 // ==========================================
-// いいね押下時の画面跳ね防止（長押し対応・操作ロックなし版）
+// いいね押下時の上部ジャンプ完全防止（スクロール追従型）
 // ==========================================
 (function() {
   const origFetch = window.fetch;
@@ -1137,53 +1137,33 @@ document.addEventListener('keydown', (e) => {
     const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
 
     if (url.includes('/like') && options && options.method && options.method.toUpperCase() === 'POST') {
-      const scrollY = window.scrollY;
+      // ユーザーが現在見ているスクロール位置（ユーザーが動かしたらその位置に更新する）
+      let targetScrollY = window.scrollY;
+      let isRestoring = false;
       const docHeight = document.documentElement.scrollHeight;
-      let userMoved = false;
-      let touchStartY = null;
 
-      // 実際にホイールを回した、または指をスライド（スクロール）したときだけ復元を解除する
-      // ※単なる画面の長押し（指を置いたまま）では解除しない
-      const onWheel = () => {
-        userMoved = true;
-        document.body.style.minHeight = '';
-        cleanup();
-      };
+      // 再描画の瞬間にページ高さが縮んで上へ押し上げられるのを防ぐため高さを一時保持
+      document.body.style.minHeight = Math.max(docHeight, targetScrollY + window.innerHeight) + 'px';
 
-      const onTouchStart = (e) => {
-        if (e.touches && e.touches.length > 0) {
-          touchStartY = e.touches[0].clientY;
+      // ユーザー自身のスクロール操作で位置が変わった場合は、それを「新しい正しい位置」として記憶する
+      const onScroll = () => {
+        if (isRestoring) return;
+        // 突然0（一番上）に飛んだ場合はブラウザの強制リセットなので無視し、それ以外の移動は追従する
+        if (window.scrollY > 0 || targetScrollY < 150) {
+          targetScrollY = window.scrollY;
         }
       };
 
-      const onTouchMove = (e) => {
-        if (touchStartY !== null && e.touches && e.touches.length > 0) {
-          // 10px以上指をスライドさせた場合のみ「ユーザーによるスクロール」と判定
-          if (Math.abs(e.touches[0].clientY - touchStartY) > 10) {
-            userMoved = true;
-            document.body.style.minHeight = '';
-            cleanup();
-          }
-        }
-      };
+      window.addEventListener('scroll', onScroll, { passive: true });
 
-      const cleanup = () => {
-        window.removeEventListener('wheel', onWheel);
-        window.removeEventListener('touchstart', onTouchStart);
-        window.removeEventListener('touchmove', onTouchMove);
-      };
-
-      window.addEventListener('wheel', onWheel, { passive: true });
-      window.addEventListener('touchstart', onTouchStart, { passive: true });
-      window.addEventListener('touchmove', onTouchMove, { passive: true });
-
-      // 再描画中にページ高さが縮んで上へ押し上げられるのを防ぐ
-      document.body.style.minHeight = docHeight + 'px';
-
-      // DOMの書き換え（再描画）を検知して、勝手なスクロールリセットだけを元の位置へ戻す
+      // DOM書き換え（コメント一覧の再描画）が起きた瞬間だけ、記憶している最新位置へ復元する
       const observer = new MutationObserver(() => {
-        if (!userMoved && window.scrollY !== scrollY) {
-          window.scrollTo(0, scrollY);
+        if (Math.abs(window.scrollY - targetScrollY) > 5) {
+          isRestoring = true;
+          window.scrollTo(0, targetScrollY);
+          requestAnimationFrame(() => {
+            isRestoring = false;
+          });
         }
       });
       observer.observe(document.body, { childList: true, subtree: true });
@@ -1193,15 +1173,15 @@ document.addEventListener('keydown', (e) => {
 
         setTimeout(() => {
           observer.disconnect();
+          window.removeEventListener('scroll', onScroll);
           document.body.style.minHeight = '';
-          cleanup();
-        }, 800);
+        }, 1000);
 
         return res;
       } catch (err) {
         observer.disconnect();
+        window.removeEventListener('scroll', onScroll);
         document.body.style.minHeight = '';
-        cleanup();
         throw err;
       }
     }
